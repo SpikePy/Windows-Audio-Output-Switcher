@@ -26,6 +26,12 @@ type Entry struct {
 	// Name too.
 	Alias string `yaml:"alias"`
 	Skip  bool   `yaml:"skip"`
+	// LastSeen is when this device was last found in the currently
+	// active device list by a Sync call - the zero value means never
+	// (e.g. a row added by hand). Sync only ever advances it forward for
+	// devices it's told are currently present; it's never used to decide
+	// whether to keep or drop an entry - Sync never removes one.
+	LastSeen time.Time `yaml:"last_seen"`
 }
 
 // DisplayName returns the name to show in the tray menu for the device
@@ -46,13 +52,19 @@ type file struct {
 
 const header = `# Audio Output Switcher - device configuration
 #
-# One entry per playback device.
-#   alias  - the name shown for this device in the tray's right-click
-#            menu; defaults to the real device name, edit freely.
-#   skip   - set to true to leave this device out when cycling outputs
-#            (hotkey, left-click tray icon, or "Next"); it stays fully
-#            clickable in the tray menu for a direct, one-off switch
-#            either way.
+# One entry per playback device. A device that's currently disconnected
+# keeps its row (and its skip/alias settings) rather than being removed
+# automatically - delete its row by hand if you want it gone for good.
+#
+#   alias      - the name shown for this device in the tray's
+#                right-click menu; defaults to the real device name,
+#                edit freely.
+#   skip       - set to true to leave this device out when cycling
+#                outputs (hotkey, left-click tray icon, or "Next"); it
+#                stays fully clickable in the tray menu for a direct,
+#                one-off switch either way.
+#   last_seen  - when this device was last detected as active; updated
+#                automatically, not meant to be hand-edited.
 #
 # Edits are picked up automatically after saving - no need to restart
 # the app.
@@ -91,17 +103,24 @@ func Load() map[string]Entry {
 	return entries
 }
 
-// Sync writes devices.yaml listing every name in names, carrying over
-// each one's alias/skip from current - plus any entry in current whose
-// device isn't in names, so a device that's momentarily disconnected
-// keeps its saved settings visible instead of quietly vanishing from
-// the file. A name with no prior entry gets one with its alias defaulted
-// to the name itself. It returns the resulting settings (equal to
-// current, just normalized to what was actually written).
+// Sync writes devices.yaml listing every name in names (the currently
+// active devices) plus every device already in current, so a device
+// that's disconnected - momentarily or for good - keeps its saved
+// settings and never gets removed automatically; only a hand-edit of
+// the file ever drops a row. A name with no prior entry gets one with
+// its alias defaulted to the name itself. Every entry for a name in
+// names has its LastSeen stamped with the current time; entries only
+// carried over from current (not currently active) keep their old
+// LastSeen. It returns the resulting settings (equal to current, just
+// normalized to what was actually written).
 func Sync(names []string, current map[string]Entry) (map[string]Entry, error) {
+	now := time.Now().Truncate(time.Second) // sub-second precision is just noise in a hand-edited file
+	active := make(map[string]bool, len(names))
+
 	seen := make(map[string]bool, len(names)+len(current))
 	all := make([]string, 0, len(names)+len(current))
 	for _, name := range names {
+		active[name] = true
 		if !seen[name] {
 			seen[name] = true
 			all = append(all, name)
@@ -125,6 +144,9 @@ func Sync(names []string, current map[string]Entry) (map[string]Entry, error) {
 		e.Name = name
 		if e.Alias == "" {
 			e.Alias = name
+		}
+		if active[name] {
+			e.LastSeen = now
 		}
 		entries[i] = e
 		result[name] = e

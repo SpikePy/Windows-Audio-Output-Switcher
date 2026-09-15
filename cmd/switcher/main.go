@@ -186,32 +186,60 @@ func (a *app) openConfigFile() {
 	if err != nil {
 		log.Printf("list devices for config file: %v", err)
 	}
-	names := make([]string, len(devices))
-	for i, d := range devices {
-		names[i] = d.Name
-	}
 
-	a.cfgMu.Lock()
-	cfg := a.cfg
-	a.cfgMu.Unlock()
-
-	merged, err := outputconfig.Sync(names, cfg)
-	if err != nil {
+	if _, err := a.syncConfig(deviceNames(devices)); err != nil {
 		log.Printf("sync output config: %v", err)
 		return
 	}
-	a.cfgMu.Lock()
-	a.cfg = merged
-	a.cfgMu.Unlock()
-	a.configMu.Lock()
-	a.configModTime = outputconfig.ModTime()
-	a.configMu.Unlock()
 	a.syncDeviceMenu()
 
 	if err := openInDefaultApp(outputconfig.Path()); err != nil {
 		log.Printf("open output config file: %v", err)
 		osd.Show("Could not open the config file")
 	}
+}
+
+// syncConfig writes the config file via outputconfig.Sync (adding any
+// name in names it doesn't already have an entry for, refreshing
+// LastSeen for all of them, and never dropping an entry for a device
+// that isn't in names), and updates a.cfg/a.configModTime to match.
+func (a *app) syncConfig(names []string) (map[string]outputconfig.Entry, error) {
+	a.cfgMu.Lock()
+	cfg := a.cfg
+	a.cfgMu.Unlock()
+
+	merged, err := outputconfig.Sync(names, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	a.cfgMu.Lock()
+	a.cfg = merged
+	a.cfgMu.Unlock()
+	a.configMu.Lock()
+	a.configModTime = outputconfig.ModTime()
+	a.configMu.Unlock()
+	return merged, nil
+}
+
+// deviceNames returns the names of devices.
+func deviceNames(devices []audio.Device) []string {
+	names := make([]string, len(devices))
+	for i, d := range devices {
+		names[i] = d.Name
+	}
+	return names
+}
+
+// hasNewDevice reports whether devices contains a name with no entry in
+// cfg yet, e.g. one just plugged in.
+func hasNewDevice(devices []audio.Device, cfg map[string]outputconfig.Entry) bool {
+	for _, d := range devices {
+		if _, ok := cfg[d.Name]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // openInDefaultApp opens path with whatever application Windows has
@@ -316,6 +344,14 @@ func (a *app) syncDeviceMenu() {
 	a.cfgMu.Lock()
 	cfg := a.cfg
 	a.cfgMu.Unlock()
+
+	if hasNewDevice(devices, cfg) {
+		if merged, err := a.syncConfig(deviceNames(devices)); err != nil {
+			log.Printf("auto-add new device(s) to config: %v", err)
+		} else {
+			cfg = merged
+		}
+	}
 
 	systray.SetTooltip(a.tooltip(outputconfig.DisplayName(cfg, current.Name)))
 
