@@ -23,6 +23,15 @@ func writeConfig(t *testing.T, content string) {
 	}
 }
 
+func readConfig(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 	withTempAppData(t)
 
@@ -67,6 +76,21 @@ func TestLoadSkipsRowsWithoutID(t *testing.T) {
 	}
 }
 
+func TestLoadKeepsOnlyTheDateOfATimestamp(t *testing.T) {
+	withTempAppData(t)
+	// Just after midnight in +02:00 is still the previous day in UTC; the
+	// date as written is the one that counts.
+	writeConfig(t, "outputs:\n  - id: dev-1\n    last_seen: 2026-09-16T00:30:00+02:00\n")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Devices["dev-1"].LastSeen.Format(time.DateOnly); got != "2026-09-16" {
+		t.Errorf("LastSeen = %s, want 2026-09-16", got)
+	}
+}
+
 func TestEffectiveSettings(t *testing.T) {
 	tests := []struct {
 		cfg        Config
@@ -108,19 +132,16 @@ func TestSyncRoundTrip(t *testing.T) {
 	}
 	for id, want := range written {
 		got := loaded.Devices[id]
-		if got.ID != id || got.Alias != want.Alias || got.Skip != want.Skip || !got.LastSeen.Equal(want.LastSeen) {
+		if got.ID != id || got.Alias != want.Alias || got.Skip != want.Skip || !got.LastSeen.Equal(want.LastSeen.Time) {
 			t.Errorf("reloaded %q = %+v, want %+v", id, got, want)
 		}
 	}
 
-	data, err := os.ReadFile(Path())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(string(data), "# Audio Output Switcher") {
+	data := readConfig(t)
+	if !strings.HasPrefix(data, "# Audio Output Switcher") {
 		t.Error("written file is missing its explanatory header")
 	}
-	if strings.Contains(string(data), "name:") {
+	if strings.Contains(data, "name:") {
 		t.Error("written file still has a name field")
 	}
 	if _, err := os.Stat(Path() + ".tmp"); !os.IsNotExist(err) {
@@ -128,9 +149,21 @@ func TestSyncRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSyncWritesLastSeenAsADate(t *testing.T) {
+	withTempAppData(t)
+	if _, err := Sync("", 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	data := readConfig(t)
+	if want := "last_seen: " + time.Now().Format(time.DateOnly) + "\n"; !strings.Contains(data, want) {
+		t.Errorf("file doesn't contain %q:\n%s", want, data)
+	}
+}
+
 func TestSyncAddsNewDevicesAndKeepsDisconnectedOnes(t *testing.T) {
 	withTempAppData(t)
-	past := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	past := dateOf(time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC))
 	current := map[string]Entry{
 		"old": {ID: "old", Alias: "Living room", Skip: true, LastSeen: past},
 	}
@@ -140,14 +173,14 @@ func TestSyncAddsNewDevicesAndKeepsDisconnectedOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if old := got["old"]; old.Alias != "Living room" || !old.Skip || !old.LastSeen.Equal(past) {
+	if old := got["old"]; old.Alias != "Living room" || !old.Skip || !old.LastSeen.Equal(past.Time) {
 		t.Errorf("disconnected device = %+v, want its settings and LastSeen kept", old)
 	}
 	added, ok := got["new"]
 	if !ok {
 		t.Fatal("newly seen device was not added")
 	}
-	if added.Alias != "Headset" || added.Skip || !added.LastSeen.After(past) {
+	if added.Alias != "Headset" || added.Skip || !added.LastSeen.After(past.Time) {
 		t.Errorf("new device = %+v, want alias defaulted to its Windows name, not skipped, LastSeen stamped", added)
 	}
 }
@@ -188,16 +221,13 @@ func TestSyncWritesEntryKeysInOrder(t *testing.T) {
 	if _, err := Sync("", 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(Path())
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	start := strings.Index(string(data), "\noutputs:")
+	data := readConfig(t)
+	start := strings.Index(data, "\noutputs:")
 	if start < 0 {
 		t.Fatalf("no outputs section in:\n%s", data)
 	}
-	outputs := string(data)[start:]
+	outputs := data[start:]
 	last := -1
 	for _, key := range []string{"id:", "alias:", "last_seen:", "skip:"} {
 		i := strings.Index(outputs, key)

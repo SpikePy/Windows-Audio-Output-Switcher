@@ -32,10 +32,33 @@ type Entry struct {
 	// Alias is the name shown for the device in the tray menu and OSD.
 	// Sync fills in the device's Windows name while it's blank.
 	Alias string `yaml:"alias"`
-	// LastSeen is when Sync last found the device active; the zero value
+	// LastSeen is the day Sync last found the device active; the zero value
 	// means never. It's informational only - Sync never removes an entry.
-	LastSeen time.Time `yaml:"last_seen"`
-	Skip     bool      `yaml:"skip"`
+	LastSeen Date `yaml:"last_seen"`
+	Skip     bool `yaml:"skip"`
+}
+
+// Date is a calendar day, written to the config file as YYYY-MM-DD.
+// Reading also accepts a full timestamp, keeping just its date.
+type Date struct{ time.Time }
+
+func dateOf(t time.Time) Date {
+	y, m, d := t.Date()
+	return Date{time.Date(y, m, d, 0, 0, 0, 0, time.UTC)}
+}
+
+func (d Date) MarshalYAML() (interface{}, error) {
+	// Tagged as a timestamp so it's written unquoted, like a date should be.
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: d.Format(time.DateOnly)}, nil
+}
+
+func (d *Date) UnmarshalYAML(n *yaml.Node) error {
+	var t time.Time
+	if err := n.Decode(&t); err != nil {
+		return err
+	}
+	*d = dateOf(t)
+	return nil
 }
 
 // DisplayName returns the alias configured for the device with the given
@@ -85,8 +108,8 @@ const header = `# Audio Output Switcher - configuration
 #   alias      - the name shown for this device in the tray menu and the
 #                on-screen notification; filled in with the device's
 #                Windows name if left blank.
-#   last_seen  - when this device was last detected as active; updated
-#                automatically, not meant to be hand-edited.
+#   last_seen  - the date this device was last detected as active;
+#                updated automatically, not meant to be hand-edited.
 #   skip       - set to true to leave this device out when cycling
 #                outputs (hotkey or left-click tray icon); it stays fully
 #                clickable in the tray menu for a direct, one-off switch
@@ -168,13 +191,13 @@ func Load() (Config, error) {
 }
 
 // Sync writes the config file with hotkey, pollSeconds, an entry for every
-// device in active - stamped with the current time as LastSeen, and given
-// the device's Windows name as its alias if it has none yet - and every
-// entry in current for a device that isn't active, unchanged. Entries are
-// never dropped; only a hand-edit removes one. It returns the device
-// entries as written, keyed by ID.
+// device in active - with today's date as LastSeen, and given the device's
+// Windows name as its alias if it has none yet - and every entry in
+// current for a device that isn't active, unchanged. Entries are never
+// dropped; only a hand-edit removes one. It returns the device entries as
+// written, keyed by ID.
 func Sync(hotkey string, pollSeconds int, active []Device, current map[string]Entry) (map[string]Entry, error) {
-	now := time.Now().Truncate(time.Second) // sub-second precision is just noise in a hand-edited file
+	today := dateOf(time.Now())
 
 	result := make(map[string]Entry, len(current)+len(active))
 	for id, e := range current {
@@ -187,7 +210,7 @@ func Sync(hotkey string, pollSeconds int, active []Device, current map[string]En
 		if e.Alias == "" {
 			e.Alias = d.Name
 		}
-		e.LastSeen = now
+		e.LastSeen = today
 		result[d.ID] = e
 	}
 

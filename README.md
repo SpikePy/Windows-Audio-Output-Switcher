@@ -50,7 +50,7 @@ overlay telling you which one is now active.
     - `id` — the Windows device ID the row belongs to; don't edit it.
     - `alias` — the name shown for it in the right-click menu and the
       OSD; filled in with the device's Windows name if left blank.
-    - `last_seen` — when it was last detected as active, updated
+    - `last_seen` — the date it was last detected as active, updated
       automatically; useful for spotting stale entries worth deleting by
       hand.
     - `skip` — set to `true` to leave it out of hotkey/left-click
