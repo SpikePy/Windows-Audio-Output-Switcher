@@ -10,10 +10,17 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf16"
+
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/aumid"
 )
 
 const (
-	appID = "Audio Output Switcher"
+	// appID must match the AppUserModelID registered by internal/aumid
+	// (via a Start Menu shortcut) - otherwise Windows can't resolve a
+	// display name/icon/settings entry for it, and tends to file the
+	// notification straight into Action Center without ever showing the
+	// on-screen banner.
+	appID = aumid.ID
 	// tag and group are shared by every notification this app shows. A
 	// new toast with the same tag+group replaces the previous one
 	// instead of stacking, so pressing the switch hotkey repeatedly

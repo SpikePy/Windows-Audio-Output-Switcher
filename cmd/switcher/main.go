@@ -14,6 +14,7 @@ import (
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/aumid"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/configwindow"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
@@ -82,6 +83,12 @@ func main() {
 		defer f.Close()
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
+
+	if exePath, err := os.Executable(); err != nil {
+		log.Printf("resolving own exe path: %v", err)
+	} else if err := aumid.Ensure(exePath); err != nil {
+		log.Printf("registering AppUserModelID: %v", err)
+	}
 
 	a := &app{skip: outputconfig.Load()}
 	systray.Run(a.onReady, a.onExit)

@@ -60,6 +60,17 @@ seem to work, check `%TEMP%\AudioOutputSwitcher.log` for details (hotkey
 registration failures, COM errors, failed notifications, etc. are all
 logged there).
 
+**Notifications land in Action Center but the banner never pops up.**
+Windows won't show the on-screen banner for a classic desktop app's toast
+notifications unless it can resolve a display name/icon for that app's
+identity, which requires an AppUserModelID registered via a Start Menu
+shortcut. The switcher creates one for itself automatically (as "Audio
+Output Switcher" in the Start Menu, [`internal/aumid`](internal/aumid)) -
+if banners still don't appear, check Windows Settings → System →
+Notifications, both for "Audio Output Switcher" and, as a fallback,
+"Windows PowerShell" (some Windows versions attribute unregistered
+toasts to the process that requested them).
+
 ## Uninstalling
 
 Grab `Uninstall_AudioOutputSwitcher.exe` from the same release and run it. It
@@ -124,6 +135,7 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `internal/llhotkey`     | Global hotkey via a low-level keyboard hook                     |
 | `internal/hotkeycfg`    | Parses hotkey combo strings like `"ctrl+alt+f9"`                |
 | `internal/notifier`     | Toast notifications                                              |
+| `internal/aumid`        | Registers the AppUserModelID toast banners need                 |
 | `internal/configwindow` | The native "Configure Outputs" window                           |
 | `internal/outputconfig` | Persists excluded outputs to `outputs.yaml`                     |
 | `internal/updater`      | GitHub release lookup/download shared by installer/uninstaller  |
