@@ -20,10 +20,12 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
-	user32                  = syscall.NewLazyDLL("user32.dll")
+	user32                  = windows.NewLazySystemDLL("user32.dll")
 	procSetWindowsHookExW   = user32.NewProc("SetWindowsHookExW")
 	procCallNextHookEx      = user32.NewProc("CallNextHookEx")
 	procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
@@ -31,10 +33,6 @@ var (
 	procTranslateMessage    = user32.NewProc("TranslateMessage")
 	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
 	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
-
-	kernel32               = syscall.NewLazyDLL("kernel32.dll")
-	procGetModuleHandleW   = kernel32.NewProc("GetModuleHandleW")
-	procGetCurrentThreadID = kernel32.NewProc("GetCurrentThreadId")
 )
 
 const (
@@ -106,6 +104,20 @@ type modifierState struct {
 	ctrl, alt, shift, win bool
 }
 
+// set records a modifier key going down or up; other keys are ignored.
+func (s *modifierState) set(vkCode uint32, down bool) {
+	switch vkCode {
+	case vkLWin, vkRWin:
+		s.win = down
+	case vkLControl, vkRControl:
+		s.ctrl = down
+	case vkLMenu, vkRMenu:
+		s.alt = down
+	case vkLShift, vkRShift:
+		s.shift = down
+	}
+}
+
 var (
 	mu       sync.Mutex
 	hotkeys  []*Hotkey
@@ -161,21 +173,27 @@ func run() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	hMod, _, _ := procGetModuleHandleW.Call(0)
-	callback := syscall.NewCallback(hookProc)
-	hHook, _, callErr := procSetWindowsHookExW.Call(uintptr(whKeyboardLL), callback, hMod, 0)
-	if hHook == 0 {
+	fail := func(err error) {
 		mu.Lock()
-		readyErr = fmt.Errorf("SetWindowsHookExW failed: %v", callErr)
+		readyErr = err
 		mu.Unlock()
 		close(ready)
+	}
+
+	var hMod windows.Handle
+	if err := windows.GetModuleHandleEx(0, nil, &hMod); err != nil {
+		fail(fmt.Errorf("GetModuleHandleEx failed: %w", err))
+		return
+	}
+	hHook, _, callErr := procSetWindowsHookExW.Call(whKeyboardLL, syscall.NewCallback(hookProc), uintptr(hMod), 0)
+	if hHook == 0 {
+		fail(fmt.Errorf("SetWindowsHookExW failed: %v", callErr))
 		return
 	}
 	defer procUnhookWindowsHookEx.Call(hHook)
 
-	tid, _, _ := procGetCurrentThreadID.Call()
 	mu.Lock()
-	threadID = uint32(tid)
+	threadID = windows.GetCurrentThreadId()
 	mu.Unlock()
 	close(ready)
 
@@ -218,38 +236,27 @@ func hookProc(nCode uintptr, wParam uintptr, lParam uintptr) uintptr {
 
 func setModifierState(vkCode uint32, down bool) {
 	mu.Lock()
-	defer mu.Unlock()
-	switch vkCode {
-	case vkLWin, vkRWin:
-		state.win = down
-	case vkLControl, vkRControl:
-		state.ctrl = down
-	case vkLMenu, vkRMenu:
-		state.alt = down
-	case vkLShift, vkRShift:
-		state.shift = down
-	}
+	state.set(vkCode, down)
+	mu.Unlock()
 }
 
+// dispatchKeydown signals every hotkey matching vkCode plus the modifiers
+// currently held, and reports whether any matched. It runs inside the
+// system-wide keyboard hook for every key press, so it must never block or
+// allocate - Windows removes a hook that's too slow to respond.
 func dispatchKeydown(vkCode uint32) (swallow bool) {
 	mu.Lock()
-	s := state
-	var matched []*Hotkey
+	defer mu.Unlock()
 	for _, h := range hotkeys {
-		if h.matches(s, vkCode) {
-			matched = append(matched, h)
-			swallow = true
+		if !h.matches(state, vkCode) {
+			continue
 		}
-	}
-	mu.Unlock()
-
-	for _, h := range matched {
+		swallow = true
 		select {
 		case h.downCh <- struct{}{}:
 		default:
 			// A previous press hasn't been consumed yet; drop this one
-			// rather than blocking the hook (which would stall all
-			// keyboard input system-wide).
+			// rather than block the hook.
 		}
 	}
 	return swallow
