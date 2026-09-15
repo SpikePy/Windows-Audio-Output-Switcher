@@ -27,7 +27,7 @@ telling you which one is now active.
 - **Configure Outputs** opens a small window listing every output
   (including ones that aren't plugged in right now) with a checkbox for
   each. Unchecking one excludes it from `Win+S`/left-click cycling — it's
-  simply skipped over, and shown as "*(excluded from cycling)*" in the
+  simply skipped over, and shown as "*(excluded)*" in the
   right-click device list — but stays fully clickable there, so you can
   still switch to it directly at any time. (Windows menu items can't be
   greyed out without also disabling the click, so this label is the

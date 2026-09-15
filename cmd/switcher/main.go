@@ -42,7 +42,7 @@ const maxDeviceSlots = 16
 // blocks the click at the OS level, and the tray library has no
 // owner-draw hook to fake it), so excluded devices are marked in the
 // label instead - they stay fully clickable for a direct, one-off switch.
-const excludedSuffix = "  (excluded from cycling)"
+const excludedSuffix = "  (excluded)"
 
 type deviceSlot struct {
 	item *systray.MenuItem
