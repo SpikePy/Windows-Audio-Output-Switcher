@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/install"
 )
@@ -18,6 +19,14 @@ import (
 // version is set via -ldflags "-X main.version=..." during the release
 // build; it stays "dev" for local builds.
 var version = "dev"
+
+// autoChoice is what running setup with no input at all - e.g.
+// double-clicked and then left alone - does after autoChoiceDelay: the
+// common case (install/update) rather than doing nothing.
+const (
+	autoChoice      = "1"
+	autoChoiceDelay = 5 * time.Second
+)
 
 func main() {
 	fmt.Println("Audio Output Switcher setup", version)
@@ -27,7 +36,8 @@ func main() {
 	fmt.Println()
 
 	uninstalled := false
-	switch prompt("Choose an option (1 or 2), or press Enter to cancel: ") {
+	label := fmt.Sprintf("Choose an option (1 or 2) - installing/updating automatically in %s if you don't: ", autoChoiceDelay)
+	switch promptWithDefault(label, autoChoice, autoChoiceDelay) {
 	case "1":
 		if err := install.Install(version); err != nil {
 			fmt.Fprintln(os.Stderr, "install failed:", err)
@@ -64,6 +74,28 @@ func prompt(label string) string {
 	fmt.Print(label)
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	return strings.TrimSpace(line)
+}
+
+// promptWithDefault is like prompt, but returns def if nothing is
+// entered within timeout - e.g. setup double-clicked and then left
+// alone, rather than sitting there forever waiting for a keypress that
+// isn't coming.
+func promptWithDefault(label, def string, timeout time.Duration) string {
+	fmt.Print(label)
+
+	lines := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		lines <- strings.TrimSpace(line)
+	}()
+
+	select {
+	case line := <-lines:
+		return line
+	case <-time.After(timeout):
+		fmt.Println(def)
+		return def
+	}
 }
 
 // selfDelete spawns a detached helper that waits for this process to
