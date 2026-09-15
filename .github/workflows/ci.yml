@@ -10,8 +10,16 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
+      # Git for Windows checks files out with CRLF line endings by default,
+      # which gofmt would then flag in every file.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
       - name: Check out repository
         uses: actions/checkout@v7
 
@@ -29,16 +37,10 @@ jobs:
             exit 1
           fi
 
-      - name: Build (windows/amd64)
-        env:
-          GOOS: windows
-          GOARCH: amd64
+      - name: Build
         run: go build ./...
 
-      - name: Vet (windows/amd64)
-        env:
-          GOOS: windows
-          GOARCH: amd64
+      - name: Vet
         run: go vet ./...
 
       - name: Test

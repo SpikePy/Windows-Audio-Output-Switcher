@@ -94,18 +94,24 @@ saved device config, and finally removes itself — nothing is left behind.
 
 ## Building from source
 
-Requires Go 1.24+. All commands target `windows/amd64`:
+Requires Go 1.24+ on Windows (the code is Windows-only):
 
 ```sh
-GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcher.exe ./cmd/switcher
-GOOS=windows GOARCH=amd64 go build -o Setup_AudioOutputSwitcher.exe ./cmd/setup
+go build -ldflags "-H=windowsgui" -o AudioOutputSwitcher.exe ./cmd/switcher
+go build -o Setup_AudioOutputSwitcher.exe ./cmd/setup
+go test ./...
 ```
 
-The official releases are built by
-[`.github/workflows/release.yml`](.github/workflows/release.yml), which also
-embeds `assets/icons/icon.ico` as each `.exe`'s icon resource. Pushing a tag
-matching `v*.*.*` builds both binaries and publishes them on a new GitHub
-release.
+(Cross-compiling from Linux/WSL also works by prefixing the build commands
+with `GOOS=windows GOARCH=amd64`.)
+
+Both pipelines run on Windows runners:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) checks formatting,
+builds, vets and tests every push to `main` and every pull request, and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) — triggered
+by pushing a tag matching `v*.*.*` — builds both binaries, embeds
+`assets/icons/icon.ico` as each `.exe`'s icon resource, and publishes them on
+a new GitHub release.
 
 ## How the switch actually happens
 
