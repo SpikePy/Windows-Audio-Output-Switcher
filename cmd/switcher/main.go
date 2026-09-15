@@ -112,7 +112,7 @@ func (a *app) onReady() {
 	}
 	systray.AddSeparator()
 
-	a.mConfigOutputs = systray.AddMenuItem("Configure Outputs...", "Open the output config file to choose which outputs to include when switching")
+	a.mConfigOutputs = systray.AddMenuItem("Configure", "Open the output config file to choose which outputs to include when switching")
 	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
 
