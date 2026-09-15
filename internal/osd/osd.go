@@ -135,6 +135,22 @@ var (
 	// wins the race to be displayed, never an older one that happened
 	// to finish CreateWindowExW later.
 	generation uint64
+	// texts holds the message to paint for each currently-live overlay
+	// window, keyed by hwnd. Win32 binds a WndProc to a window CLASS,
+	// not to each window created with it - registerClassOnce registers
+	// exactly one WndProc (wndProc below), shared by every popup for the
+	// life of the process - so per-popup state like its text can't be
+	// captured in a per-call closure (an earlier version of this code
+	// tried that: only the very first Show call's text ever actually
+	// registered, since RegisterClassExW silently no-ops on every call
+	// after that, leaving every later popup painting through the first
+	// call's closure - i.e. permanently stuck showing the first
+	// message). wndProc looks the right text up from here by the hwnd
+	// Windows actually gives it, which is always correct.
+	texts = make(map[uintptr]*uint16)
+
+	registerClassOnce sync.Once
+	registeredClass   *uint16
 )
 
 // Show displays message in the overlay, replacing whatever it's
@@ -154,6 +170,53 @@ func Show(message string) {
 	go run(message, myGeneration)
 }
 
+// registerClass registers the overlay window class exactly once, with a
+// single WndProc shared by every popup - see the texts comment above for
+// why per-call state must not be captured in it.
+func registerClass(hInstance uintptr) *uint16 {
+	registerClassOnce.Do(func() {
+		classNamePtr, _ := syscall.UTF16PtrFromString(className)
+		wc := wndClassExW{
+			LpfnWndProc:   syscall.NewCallback(wndProc),
+			HInstance:     hInstance,
+			LpszClassName: classNamePtr,
+		}
+		wc.CbSize = uint32(unsafe.Sizeof(wc))
+		procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+		registeredClass = classNamePtr
+	})
+	return registeredClass
+}
+
+func wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
+	switch message {
+	case wmPaint:
+		mu.Lock()
+		msgPtr := texts[hwnd]
+		mu.Unlock()
+		paint(hwnd, msgPtr)
+		return 0
+	case wmTimer:
+		procKillTimer.Call(hwnd, timerID)
+		procDestroyWindow.Call(hwnd)
+		return 0
+	case wmClose:
+		procDestroyWindow.Call(hwnd)
+		return 0
+	case wmDestroy:
+		mu.Lock()
+		if hwndCurrent == hwnd {
+			hwndCurrent = 0
+		}
+		delete(texts, hwnd)
+		mu.Unlock()
+		procPostQuitMessage.Call(0)
+		return 0
+	}
+	r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
+	return r
+}
+
 func run(message string, myGeneration uint64) {
 	// A window's message queue belongs to the OS thread that created
 	// it - GetMessageW/DispatchMessageW below must run on that same
@@ -163,44 +226,8 @@ func run(message string, myGeneration uint64) {
 	defer runtime.UnlockOSThread()
 
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
-	classNamePtr, _ := syscall.UTF16PtrFromString(className)
+	classNamePtr := registerClass(hInstance)
 	msgPtr, _ := syscall.UTF16PtrFromString(message)
-
-	proc := func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
-		switch message {
-		case wmPaint:
-			paint(hwnd, msgPtr)
-			return 0
-		case wmTimer:
-			procKillTimer.Call(hwnd, timerID)
-			procDestroyWindow.Call(hwnd)
-			return 0
-		case wmClose:
-			procDestroyWindow.Call(hwnd)
-			return 0
-		case wmDestroy:
-			mu.Lock()
-			if hwndCurrent == hwnd {
-				hwndCurrent = 0
-			}
-			mu.Unlock()
-			procPostQuitMessage.Call(0)
-			return 0
-		}
-		r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
-		return r
-	}
-
-	wc := wndClassExW{
-		LpfnWndProc:   syscall.NewCallback(proc),
-		HInstance:     hInstance,
-		LpszClassName: classNamePtr,
-	}
-	wc.CbSize = uint32(unsafe.Sizeof(wc))
-	// The return value is ignored: if this fails only because the class
-	// is already registered from a previous overlay, CreateWindowExW
-	// below still succeeds using that existing class.
-	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
 
 	screenW, _, _ := procGetSystemMetrics.Call(smCxscreen)
 	screenH, _, _ := procGetSystemMetrics.Call(smCyscreen)
@@ -223,6 +250,7 @@ func run(message string, myGeneration uint64) {
 	superseded := generation != myGeneration
 	if !superseded {
 		hwndCurrent = hwnd
+		texts[hwnd] = msgPtr
 	}
 	mu.Unlock()
 	if superseded {
