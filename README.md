@@ -42,7 +42,7 @@ rights required, and nothing running except while you're logged in.
 
 ## Installing
 
-1. Grab `AudioOutputSwitcherInstall.exe` from the
+1. Grab `Install_AudioOutputSwitcher.exe` from the
    [latest release](../../releases/latest) and run it.
 2. It downloads the newest `AudioOutputSwitcher.exe`, places it in your
    Startup folder, and starts it immediately — no reboot needed.
@@ -63,7 +63,7 @@ logged there).
 
 ## Uninstalling
 
-Grab `AudioOutputSwitcherUninstall.exe` from the same release and run it. It
+Grab `Uninstall_AudioOutputSwitcher.exe` from the same release and run it. It
 stops the running app, removes it from the Startup folder, and finally
 removes itself — nothing is left behind.
 
@@ -73,8 +73,8 @@ Requires Go 1.24+. All commands target `windows/amd64`:
 
 ```sh
 GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcher.exe ./cmd/switcher
-GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcherInstall.exe ./cmd/installer
-GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcherUninstall.exe ./cmd/uninstaller
+GOOS=windows GOARCH=amd64 go build -o Install_AudioOutputSwitcher.exe ./cmd/installer
+GOOS=windows GOARCH=amd64 go build -o Uninstall_AudioOutputSwitcher.exe ./cmd/uninstaller
 ```
 
 The official releases are built by
