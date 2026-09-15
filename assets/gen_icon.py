@@ -63,21 +63,28 @@ def draw_switch_arrows(draw, cx, cy, radius, width, color, shadow):
     draw.arc(bbox, start=20, end=220, fill=color, width=width)
 
     def arrowhead(angle_deg, color):
+        # A chevron sitting ON the ring, pointing tangentially (i.e.
+        # along the circle's curve, in the arc's sweep direction) rather
+        # than radially outward - the classic "refresh/cycle" look.
         a = math.radians(angle_deg)
-        tip = (cx + radius * math.cos(a), cy + radius * math.sin(a))
-        back = (
-            cx + (radius - width * 1.8) * math.cos(a),
-            cy + (radius - width * 1.8) * math.sin(a),
+        radial = (math.cos(a), math.sin(a))
+        tangent = (-math.sin(a), math.cos(a))  # direction of increasing angle
+
+        center = (cx + radius * radial[0], cy + radius * radial[1])
+        head_len = width * 2.6
+        head_w = width * 1.5
+
+        tip = (
+            center[0] + tangent[0] * head_len * 0.55,
+            center[1] + tangent[1] * head_len * 0.55,
         )
-        perp = a + math.pi / 2
-        spread = width * 1.3
-        p1 = (back[0] + spread * math.cos(perp), back[1] + spread * math.sin(perp))
-        p2 = (back[0] - spread * math.cos(perp), back[1] - spread * math.sin(perp))
-        tip_ext = (
-            cx + (radius + width * 0.9) * math.cos(a),
-            cy + (radius + width * 0.9) * math.sin(a),
+        base = (
+            center[0] - tangent[0] * head_len * 0.45,
+            center[1] - tangent[1] * head_len * 0.45,
         )
-        draw.polygon([tip_ext, p1, p2], fill=color)
+        p1 = (base[0] + radial[0] * head_w, base[1] + radial[1] * head_w)
+        p2 = (base[0] - radial[0] * head_w, base[1] - radial[1] * head_w)
+        draw.polygon([tip, p1, p2], fill=color)
 
     arrowhead(40, color)
     arrowhead(220, color)

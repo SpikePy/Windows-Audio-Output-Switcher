@@ -6,27 +6,29 @@ telling you which one is now active.
 
 ## What it does
 
-- **Cycles the default playback device.** Press the configured hotkey
-  (`Win+S` by default) and Windows' default audio output moves to the
-  next active playback device in the list, wrapping back to the first one
-  after the last. This updates the default for all three roles Windows
-  tracks (console, multimedia, communications), so it takes effect for
-  every application immediately — the same as changing it by hand in the
-  Windows sound settings.
+- **Cycles the default playback device.** Press **Win+S**, left-click the
+  tray icon, or pick a device from the right-click menu, and Windows'
+  default audio output moves to the next active playback device in the
+  list, wrapping back to the first one after the last. This updates the
+  default for all three roles Windows tracks (console, multimedia,
+  communications), so it takes effect for every application immediately —
+  the same as changing it by hand in the Windows sound settings.
+- **`Win+S` actually works for this**, even though Windows normally
+  reserves it for Search. See [how](#binding-win-shortcuts) below.
 - **Shows a toast notification on every switch**, naming the device that is
   now active, so you get instant confirmation of what you just switched to.
   Pressing the hotkey again quickly replaces the previous toast instead of
   piling up a stack of them.
-- **Lives in the system tray** with a small icon that reflects whether
-  switching is currently enabled:
-  - **Left-click** the tray icon to toggle switching on/off.
+- **Lives in the system tray**:
+  - **Left-click** the tray icon to switch to the next output device.
   - **Right-click** opens a menu listing every currently active output
-    device — click one to switch to it directly — followed by *Enable*,
-    *Disable* and *Exit*. The currently active device is checked.
-  - While disabled, the hotkey is ignored and the icon turns grey; picking a
-    device from the menu still works either way.
-- **Remembers its settings** (hotkey and enabled/disabled state) across
-  restarts, in `%APPDATA%\AudioOutputSwitcher\config.json`.
+    device — click one to switch to it directly (the active one is
+    checked) — followed by *Enable*, *Disable* and *Exit*.
+  - *Enable*/*Disable* only affects the `Win+S` hotkey; left-click and
+    picking a device from the menu always work.
+- **No configuration file, nothing to set up.** The hotkey is fixed and
+  the app has no settings beyond enabled/disabled, which resets to enabled
+  on every restart.
 
 It's a single ~8 MB `.exe` with no installation dependencies, no admin
 rights required, and nothing running except while you're logged in.
@@ -45,33 +47,11 @@ rights required, and nothing running except while you're logged in.
 The switcher itself has no window; look for its icon in the system tray
 (you may need to expand the "hidden icons" arrow the first time).
 
-## Configuring the hotkey
-
-Edit `%APPDATA%\AudioOutputSwitcher\config.json` and restart the app:
-
-```json
-{
-  "hotkey": "win+s",
-  "enabled": true
-}
-```
-
-Combine any of `ctrl`, `alt`, `shift`, `win` with a letter, digit, function
-key (`f1`-`f20`), or one of `space`, `enter`, `escape`, `tab`, `delete`,
-`left`, `right`, `up`, `down` — for example `"ctrl+shift+space"`.
-
-> **Note:** Windows reserves several `Win+<letter>` combinations for the
-> shell itself (Search, Explorer, Run, lock screen, ...). On some Windows
-> versions the shell intercepts these before this app's hotkey ever fires,
-> so `Win+S` may keep opening Windows Search instead of switching devices.
-> If that happens, pick a combo that includes `ctrl`, `alt` or `shift`
-> instead, e.g. `"ctrl+alt+f9"`.
-
 ## Uninstalling
 
 Grab `AudioOutputSwitcherUninstall.exe` from the same release and run it. It
-stops the running app, removes it from the Startup folder, deletes its
-configuration, and finally removes itself — nothing is left behind.
+stops the running app, removes it from the Startup folder, and finally
+removes itself — nothing is left behind.
 
 ## Building from source
 
@@ -97,16 +77,39 @@ Windows' own sound settings UI and tools like EarTrumpet or NirCmd rely on;
 it has been stable since Windows 7. See
 [`internal/audio`](internal/audio) for the implementation.
 
+## Binding Win+ shortcuts
+
+Windows reserves most bare `Win+<letter>` combinations for the shell itself
+(`Win+S` for Search, `Win+E` for Explorer, `Win+A` for Quick Settings, ...).
+The standard way to claim a global hotkey, `RegisterHotKey`, doesn't help
+here: the shell's own shortcut handling sees the keystroke first, so the
+app's `WM_HOTKEY` never fires and the reserved action still happens.
+
+Instead, [`internal/llhotkey`](internal/llhotkey) installs a low-level
+keyboard hook (`WH_KEYBOARD_LL`), which runs earlier in the input pipeline
+than the shell's shortcut handling. When the configured combo is detected,
+the hook consumes the keystroke — rather than passing it on — which is what
+stops Search from also opening. This is the same technique tools like
+AutoHotkey use to remap `Win+<key>` shortcuts.
+
+**Trade-off:** a global low-level keyboard hook sees every keystroke typed
+anywhere on the system (necessary to detect the combo at all — this app
+only acts on the one combo it's watching for and otherwise passes every
+other keystroke straight through unmodified). Antivirus/EDR software can
+flag this pattern heuristically since it overlaps with how keyloggers work;
+if that happens, it's a false positive rather than any actual keystroke
+logging, and the source in `internal/llhotkey` is the whole of what runs.
+
 ## Project layout
 
-| Path                    | Purpose                                                    |
-| ------------------------ | ----------------------------------------------------------- |
-| `cmd/switcher`           | The tray application                                       |
-| `cmd/installer`          | Downloads the latest release into the Startup folder        |
-| `cmd/uninstaller`        | Removes everything the installer set up                     |
-| `internal/audio`         | Core Audio API + `IPolicyConfig` bindings                    |
-| `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`            |
-| `internal/notifier`      | Toast notifications                                          |
-| `internal/appstate`      | Persisted settings (`config.json`)                          |
-| `internal/updater`       | GitHub release lookup/download shared by installer/uninstaller |
-| `assets/icons`           | Embedded tray/exe icon                                       |
+| Path                | Purpose                                                          |
+| ------------------- | ----------------------------------------------------------------- |
+| `cmd/switcher`       | The tray application                                             |
+| `cmd/installer`      | Downloads the latest release into the Startup folder             |
+| `cmd/uninstaller`    | Removes everything the installer set up                          |
+| `internal/audio`     | Core Audio API + `IPolicyConfig` bindings                          |
+| `internal/llhotkey`  | Global hotkey via a low-level keyboard hook                      |
+| `internal/hotkeycfg` | Parses hotkey combo strings like `"ctrl+alt+f9"`                  |
+| `internal/notifier`  | Toast notifications                                                |
+| `internal/updater`   | GitHub release lookup/download shared by installer/uninstaller    |
+| `assets/icons`       | Embedded tray/exe icon                                             |

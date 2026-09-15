@@ -9,18 +9,23 @@ import (
 	"time"
 
 	"fyne.io/systray"
-	"golang.design/x/hotkey"
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/appstate"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/notifier"
 )
 
 // version is set via -ldflags "-X main.version=..." during the release
 // build; it stays "dev" for local builds.
 var version = "dev"
+
+// hotkeyCombo is the fixed global shortcut that cycles the active output
+// device. It's intentionally not user-configurable (no config file):
+// Win+S is normally reserved by the shell for Search, but internal/llhotkey
+// intercepts it via a low-level keyboard hook before the shell sees it.
+const hotkeyCombo = "win+s"
 
 // maxDeviceSlots caps how many playback devices can be listed in the tray
 // menu at once. Slots are pre-created and hidden/shown as the device list
@@ -34,11 +39,10 @@ type deviceSlot struct {
 }
 
 type app struct {
-	cfg     appstate.Config
 	enabled bool
 
 	worker *audio.Worker
-	hk     *hotkey.Hotkey
+	hk     *llhotkey.Hotkey
 
 	deviceSlots [maxDeviceSlots]deviceSlot
 	deviceMu    sync.Mutex
@@ -49,13 +53,7 @@ type app struct {
 }
 
 func main() {
-	cfg, err := appstate.Load()
-	if err != nil {
-		log.Printf("loading config: %v", err)
-		cfg = appstate.Config{Hotkey: appstate.DefaultHotkey, Enabled: true}
-	}
-
-	a := &app{cfg: cfg, enabled: cfg.Enabled}
+	a := &app{enabled: true}
 	systray.Run(a.onReady, a.onExit)
 }
 
@@ -71,15 +69,16 @@ func (a *app) onReady() {
 	}
 	systray.AddSeparator()
 
-	a.mEnable = systray.AddMenuItem("Enable", "Enable audio output switching")
-	a.mDisable = systray.AddMenuItem("Disable", "Disable audio output switching")
+	a.mEnable = systray.AddMenuItem("Enable", "Enable the switch hotkey")
+	a.mDisable = systray.AddMenuItem("Disable", "Disable the switch hotkey")
 	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
 	a.updateMenuState()
 
-	// Left click toggles enabled/disabled; right click shows the menu
-	// built above, listing every output device plus Enable/Disable/Exit.
-	systray.SetOnTapped(a.toggleEnabled)
+	// Left click switches to the next output device directly, same as
+	// the hotkey; right click shows the menu built above, listing every
+	// output device plus Enable/Disable/Exit.
+	systray.SetOnTapped(a.switchOutput)
 
 	a.worker = audio.StartWorker()
 	a.registerHotkey()
@@ -91,25 +90,28 @@ func (a *app) onReady() {
 
 func (a *app) onExit() {
 	if a.hk != nil {
-		_ = a.hk.Unregister()
+		llhotkey.Unregister(a.hk)
 	}
+	llhotkey.Stop()
 	if a.worker != nil {
 		a.worker.Stop()
 	}
 }
 
 func (a *app) registerHotkey() {
-	mods, key, err := hotkeycfg.Parse(a.cfg.Hotkey)
+	mods, key, err := hotkeycfg.Parse(hotkeyCombo)
 	if err != nil {
-		log.Printf("invalid hotkey %q: %v", a.cfg.Hotkey, err)
-		mods, key, _ = hotkeycfg.Parse(appstate.DefaultHotkey)
+		// hotkeyCombo is a compile-time constant; a parse failure here
+		// is a programming error, not a runtime condition to recover
+		// from gracefully.
+		log.Fatalf("invalid built-in hotkey %q: %v", hotkeyCombo, err)
 	}
 
-	hk := hotkey.New(mods, key)
-	if err := hk.Register(); err != nil {
-		log.Printf("failed to register hotkey %q: %v", a.cfg.Hotkey, err)
+	hk := llhotkey.New(mods.Ctrl, mods.Alt, mods.Shift, mods.Win, key)
+	if err := llhotkey.Register(hk); err != nil {
+		log.Printf("failed to register hotkey %q: %v", hotkeyCombo, err)
 		_ = notifier.Show("Audio Output Switcher",
-			fmt.Sprintf("Could not register the switch hotkey (%s). Another app might already be using it.", a.cfg.Hotkey))
+			fmt.Sprintf("Could not register the switch hotkey (%s): %v", hotkeyCombo, err))
 		return
 	}
 
@@ -229,19 +231,11 @@ func (a *app) switchTo(id string) {
 	a.syncDeviceMenu()
 }
 
-func (a *app) toggleEnabled() {
-	a.setEnabled(!a.enabled)
-}
-
 func (a *app) setEnabled(enabled bool) {
 	if a.enabled == enabled {
 		return
 	}
 	a.enabled = enabled
-	a.cfg.Enabled = enabled
-	if err := a.cfg.Save(); err != nil {
-		log.Printf("saving config: %v", err)
-	}
 
 	systray.SetIcon(a.iconBytes())
 	systray.SetTooltip(a.tooltip())
@@ -270,5 +264,5 @@ func (a *app) tooltip() string {
 	if !a.enabled {
 		state = "disabled"
 	}
-	return fmt.Sprintf("Audio Output Switcher %s — %s\nHotkey: %s", version, state, a.cfg.Hotkey)
+	return fmt.Sprintf("Audio Output Switcher %s — hotkey %s is %s\nLeft-click: switch now. Right-click: pick a device.", version, hotkeyCombo, state)
 }

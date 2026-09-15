@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/appstate"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
 
@@ -28,7 +27,10 @@ func main() {
 	removeAll(updater.InstalledExePath())
 	removeAll(updater.InstalledExePath() + ".old")
 	removeAll(updater.VersionFilePath())
-	removeAll(appstate.Dir())
+	// Versions up to v0.9.3 stored settings in a config.json here; clean
+	// it up too if present so upgrading from one of those still leaves
+	// no trace.
+	removeAll(filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher"))
 
 	fmt.Println("Audio Output Switcher has been removed.")
 	selfDelete()
