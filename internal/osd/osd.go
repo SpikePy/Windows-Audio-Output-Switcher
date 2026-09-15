@@ -8,6 +8,7 @@
 package osd
 
 import (
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -126,6 +127,14 @@ type paintStruct struct {
 var (
 	mu          sync.Mutex
 	hwndCurrent uintptr
+	// generation increments on every Show call; each run goroutine
+	// checks it against the value it was launched with right after
+	// creating its window (see run) so that if a newer Show call has
+	// since come in - which can happen before hwndCurrent even exists
+	// yet to close, on a burst of rapid switches - the newer one always
+	// wins the race to be displayed, never an older one that happened
+	// to finish CreateWindowExW later.
+	generation uint64
 )
 
 // Show displays message in the overlay, replacing whatever it's
@@ -133,6 +142,8 @@ var (
 // ever shows the latest one.
 func Show(message string) {
 	mu.Lock()
+	generation++
+	myGeneration := generation
 	old := hwndCurrent
 	mu.Unlock()
 
@@ -140,10 +151,17 @@ func Show(message string) {
 		procPostMessageW.Call(old, wmClose, 0, 0)
 	}
 
-	go run(message)
+	go run(message, myGeneration)
 }
 
-func run(message string) {
+func run(message string, myGeneration uint64) {
+	// A window's message queue belongs to the OS thread that created
+	// it - GetMessageW/DispatchMessageW below must run on that same
+	// thread, which Go doesn't otherwise guarantee across the blocking
+	// syscalls in between unless the goroutine is pinned.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	hInstance, _, _ := procGetModuleHandleW.Call(0)
 	classNamePtr, _ := syscall.UTF16PtrFromString(className)
 	msgPtr, _ := syscall.UTF16PtrFromString(message)
@@ -202,8 +220,18 @@ func run(message string) {
 	}
 
 	mu.Lock()
-	hwndCurrent = hwnd
+	superseded := generation != myGeneration
+	if !superseded {
+		hwndCurrent = hwnd
+	}
 	mu.Unlock()
+	if superseded {
+		// A newer Show call already came and went (or is about to)
+		// while this one was still creating its window - never publish
+		// or display stale content over whatever it showed.
+		procDestroyWindow.Call(hwnd)
+		return
+	}
 
 	hRgn, _, _ := procCreateRoundRectRgn.Call(0, 0, windowWidth+1, windowHeight+1, cornerRadius, cornerRadius)
 	procSetWindowRgn.Call(hwnd, hRgn, 1)
