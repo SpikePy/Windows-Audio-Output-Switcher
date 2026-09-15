@@ -1,14 +1,11 @@
 //go:build windows
 
 // Package audio wraps the pieces of the Windows Core Audio API needed to
-// list playback devices and change which one is the system default.
+// list playback devices, change which one is the system default, and hear
+// about device changes.
 package audio
 
-import (
-	"fmt"
-
-	"github.com/moutend/go-wca/pkg/wca"
-)
+import "fmt"
 
 // Device describes one playback (render) endpoint.
 type Device struct {
@@ -16,42 +13,12 @@ type Device struct {
 	Name string
 }
 
-func newEnumerator() (*wca.IMMDeviceEnumerator, error) {
-	var mmde *wca.IMMDeviceEnumerator
-	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
-		return nil, fmt.Errorf("create device enumerator: %w", err)
-	}
-	return mmde, nil
-}
-
-func deviceID(dev *wca.IMMDevice) (string, error) {
-	var id string
-	if err := dev.GetId(&id); err != nil {
-		return "", fmt.Errorf("read device id: %w", err)
-	}
-	return id, nil
-}
-
-func friendlyName(dev *wca.IMMDevice) (string, error) {
-	var store *wca.IPropertyStore
-	if err := dev.OpenPropertyStore(wca.STGM_READ, &store); err != nil {
-		return "", fmt.Errorf("open property store: %w", err)
-	}
-	defer store.Release()
-
-	var pv wca.PROPVARIANT
-	if err := store.GetValue(&wca.PKEY_Device_FriendlyName, &pv); err != nil {
-		return "", fmt.Errorf("read friendly name: %w", err)
-	}
-	return pv.String(), nil
-}
-
-func toDevice(dev *wca.IMMDevice) (Device, error) {
-	id, err := deviceID(dev)
+func toDevice(dev *iMMDevice) (Device, error) {
+	id, err := dev.id()
 	if err != nil {
-		return Device{}, err
+		return Device{}, fmt.Errorf("read device id: %w", err)
 	}
-	name, err := friendlyName(dev)
+	name, err := dev.friendlyName()
 	if err != nil {
 		// Fall back to the raw endpoint ID rather than failing outright;
 		// a device is still usable even if Windows can't name it.
@@ -69,21 +36,21 @@ func List() ([]Device, error) {
 	}
 	defer mmde.Release()
 
-	var collection *wca.IMMDeviceCollection
-	if err := mmde.EnumAudioEndpoints(wca.ERender, wca.DEVICE_STATE_ACTIVE, &collection); err != nil {
+	collection, err := mmde.enumAudioEndpoints(eRender, deviceStateActive)
+	if err != nil {
 		return nil, fmt.Errorf("enumerate endpoints: %w", err)
 	}
 	defer collection.Release()
 
-	var count uint32
-	if err := collection.GetCount(&count); err != nil {
+	count, err := collection.count()
+	if err != nil {
 		return nil, fmt.Errorf("count endpoints: %w", err)
 	}
 
 	devices := make([]Device, 0, count)
 	for i := uint32(0); i < count; i++ {
-		var dev *wca.IMMDevice
-		if err := collection.Item(i, &dev); err != nil {
+		dev, err := collection.item(i)
+		if err != nil {
 			return nil, fmt.Errorf("read endpoint %d: %w", i, err)
 		}
 		d, err := toDevice(dev)
@@ -105,8 +72,8 @@ func Current() (Device, error) {
 	}
 	defer mmde.Release()
 
-	var dev *wca.IMMDevice
-	if err := mmde.GetDefaultAudioEndpoint(wca.ERender, wca.EConsole, &dev); err != nil {
+	dev, err := mmde.defaultAudioEndpoint(eRender, eConsole)
+	if err != nil {
 		return Device{}, fmt.Errorf("get default endpoint: %w", err)
 	}
 	defer dev.Release()
@@ -119,13 +86,13 @@ func Current() (Device, error) {
 // three is what makes the switch take effect for every application,
 // matching what the Windows sound settings UI does.
 func SetDefault(id string) error {
-	var policyConfig *iPolicyConfig
-	if err := wca.CoCreateInstance(clsidPolicyConfig, 0, wca.CLSCTX_ALL, iidPolicyConfig, &policyConfig); err != nil {
+	policyConfig, err := newPolicyConfig()
+	if err != nil {
 		return fmt.Errorf("create policy config: %w", err)
 	}
 	defer policyConfig.Release()
 
-	for _, role := range []uint32{wca.EConsole, wca.EMultimedia, wca.ECommunications} {
+	for _, role := range []uint32{eConsole, eMultimedia, eCommunications} {
 		if err := policyConfig.setDefaultEndpoint(id, role); err != nil {
 			return fmt.Errorf("set default endpoint: %w", err)
 		}

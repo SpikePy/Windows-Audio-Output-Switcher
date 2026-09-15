@@ -3,11 +3,12 @@
 package audio
 
 import (
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
-	"github.com/moutend/go-wca/pkg/wca"
 )
 
 // deviceChanges gets a signal whenever Windows reports an output device
@@ -15,9 +16,13 @@ import (
 // instead of ever blocking the Windows thread that delivers it.
 var deviceChanges = make(chan struct{}, 1)
 
+// lastChange is when the most recent change was reported, in UnixNano.
+var lastChange atomic.Int64
+
 // notificationClient is a minimal IMMNotificationClient COM object that
 // lives for the whole process, so it needs no reference counting. Windows
-// calls it on its own threads; every method only does a non-blocking send.
+// calls it on its own threads; every method only records the time and
+// does a non-blocking send.
 type notificationClient struct {
 	vtbl *notificationClientVtbl
 }
@@ -46,19 +51,26 @@ var client = &notificationClient{vtbl: &notificationClientVtbl{
 
 // notifyEnum is the enumerator client is registered with, kept alive while
 // registered. Only touched on the Worker's COM thread.
-var notifyEnum *wca.IMMDeviceEnumerator
+var notifyEnum *iMMDeviceEnumerator
 
 func signalChange() {
+	lastChange.Store(time.Now().UnixNano())
 	select {
 	case deviceChanges <- struct{}{}:
 	default:
 	}
 }
 
+// LastChange returns when Windows last reported an output device change
+// (the zero time if it hasn't since WatchChanges).
+func LastChange() time.Time {
+	return time.Unix(0, lastChange.Load())
+}
+
 func ncQueryInterface(this, riid, ppv uintptr) uintptr {
 	iid := *(**ole.GUID)(unsafe.Pointer(&riid))
 	out := *(**uintptr)(unsafe.Pointer(&ppv))
-	if ole.IsEqualGUID(iid, ole.IID_IUnknown) || ole.IsEqualGUID(iid, wca.IID_IMMNotificationClient) {
+	if ole.IsEqualGUID(iid, ole.IID_IUnknown) || ole.IsEqualGUID(iid, iidIMMNotificationClient) {
 		*out = this
 		return ole.S_OK
 	}
@@ -79,7 +91,7 @@ func ncOnDeviceAddedRemoved(_, _ uintptr) uintptr {
 }
 
 func ncOnDefaultDeviceChanged(_, flow, _, _ uintptr) uintptr {
-	if flow == uintptr(wca.ERender) {
+	if flow == eRender {
 		signalChange()
 	}
 	return ole.S_OK
@@ -109,11 +121,9 @@ func startWatching() error {
 	if err != nil {
 		return err
 	}
-	hr, _, _ := syscall.SyscallN(mmde.VTable().RegisterEndpointNotificationCallback,
-		uintptr(unsafe.Pointer(mmde)), uintptr(unsafe.Pointer(client)))
-	if hr != 0 {
+	if err := mmde.registerNotificationClient(client); err != nil {
 		mmde.Release()
-		return ole.NewError(hr)
+		return err
 	}
 	notifyEnum = mmde
 	return nil
@@ -123,8 +133,7 @@ func stopWatching() {
 	if notifyEnum == nil {
 		return
 	}
-	syscall.SyscallN(notifyEnum.VTable().UnregisterEndpointNotificationCallback,
-		uintptr(unsafe.Pointer(notifyEnum)), uintptr(unsafe.Pointer(client)))
+	notifyEnum.unregisterNotificationClient(client)
 	notifyEnum.Release()
 	notifyEnum = nil
 }

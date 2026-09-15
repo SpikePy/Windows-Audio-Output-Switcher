@@ -115,12 +115,7 @@ func cycleNext(excluded map[string]bool) SwitchResult {
 		return SwitchResult{Err: errors.New("no active playback devices found")}
 	}
 
-	devices := make([]Device, 0, len(all))
-	for _, d := range all {
-		if !excluded[d.ID] {
-			devices = append(devices, d)
-		}
-	}
+	devices := included(all, excluded)
 	if len(devices) == 0 {
 		return SwitchResult{Err: errors.New("every output is excluded in Configure")}
 	}
@@ -133,21 +128,34 @@ func cycleNext(excluded map[string]bool) SwitchResult {
 		return SwitchResult{Err: fmt.Errorf("get current device: %w", err)}
 	}
 
-	// If the current device isn't in the included set (e.g. it was just
-	// excluded), start over from the first included device.
-	nextIndex := 0
-	for i, d := range devices {
-		if d.ID == current.ID {
-			nextIndex = (i + 1) % len(devices)
-			break
-		}
-	}
-
-	next := devices[nextIndex]
+	next := nextAfter(devices, current.ID)
 	if err := SetDefault(next.ID); err != nil {
 		return SwitchResult{Err: fmt.Errorf("set default device: %w", err)}
 	}
 	return SwitchResult{Device: next, Switched: true}
+}
+
+// included returns the devices whose ID isn't in excluded, in order.
+func included(devices []Device, excluded map[string]bool) []Device {
+	out := make([]Device, 0, len(devices))
+	for _, d := range devices {
+		if !excluded[d.ID] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// nextAfter returns the device following the one with currentID, wrapping
+// around after the last. If currentID isn't among devices (e.g. the
+// current output was just excluded), it starts over from the first.
+func nextAfter(devices []Device, currentID string) Device {
+	for i, d := range devices {
+		if d.ID == currentID {
+			return devices[(i+1)%len(devices)]
+		}
+	}
+	return devices[0]
 }
 
 func switchToID(id string) SwitchResult {

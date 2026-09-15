@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
+	"golang.org/x/sys/windows"
 )
 
 // IPolicyConfig is an undocumented COM interface that Windows itself uses
@@ -39,6 +40,14 @@ type iPolicyConfigVtbl struct {
 	SetEndpointVisibility uintptr
 }
 
+func newPolicyConfig() (*iPolicyConfig, error) {
+	unk, err := ole.CreateInstance(clsidPolicyConfig, iidPolicyConfig)
+	if err != nil {
+		return nil, err
+	}
+	return (*iPolicyConfig)(unsafe.Pointer(unk)), nil
+}
+
 func (v *iPolicyConfig) vtable() *iPolicyConfigVtbl {
 	return (*iPolicyConfigVtbl)(unsafe.Pointer(v.RawVTable))
 }
@@ -46,7 +55,7 @@ func (v *iPolicyConfig) vtable() *iPolicyConfigVtbl {
 // setDefaultEndpoint assigns the endpoint identified by deviceID to the
 // given ERole (console, multimedia or communications).
 func (v *iPolicyConfig) setDefaultEndpoint(deviceID string, role uint32) error {
-	idPtr, err := syscall.UTF16PtrFromString(deviceID)
+	idPtr, err := windows.UTF16PtrFromString(deviceID)
 	if err != nil {
 		return err
 	}
@@ -56,8 +65,5 @@ func (v *iPolicyConfig) setDefaultEndpoint(deviceID string, role uint32) error {
 		uintptr(unsafe.Pointer(idPtr)),
 		uintptr(role),
 	)
-	if hr != 0 {
-		return ole.NewError(hr)
-	}
-	return nil
+	return hrError(hr)
 }
