@@ -1,66 +1,73 @@
 package updater
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
-// ReleaseAsset is one downloadable file attached to a GitHub release.
-type ReleaseAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
-
-// Release is the subset of the GitHub releases API response this tool
-// needs.
+// Release identifies the newest published release of Owner/Repo.
 type Release struct {
-	TagName string         `json:"tag_name"`
-	Assets  []ReleaseAsset `json:"assets"`
+	TagName string
 }
 
-// LatestRelease fetches metadata for the newest published release of
-// Owner/Repo.
+// LatestRelease resolves the tag name of the newest published release of
+// Owner/Repo via the plain release-page redirect rather than the JSON
+// REST API: the API's unauthenticated rate limit (60 requests/hour) is
+// per source IP, so it's shared by every install/update behind the same
+// NAT/office network and gets exhausted easily, whereas this redirect
+// isn't subject to that limit.
 func LatestRelease() (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", Owner, Repo)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	url := fmt.Sprintf("https://github.com/%s/%s/releases/latest", Owner, Repo)
+	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "AudioOutputSwitcher-Installer")
 
-	resp, err := httpClient.Do(req)
+	// Don't follow the redirect - the tag name is read straight off its
+	// Location header instead of fetching the (large, HTML) release page.
+	noRedirect := &http.Client{
+		Timeout: httpClient.Timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("contact GitHub: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("GitHub returned %s: %s", resp.Status, body)
+	loc := resp.Header.Get("Location")
+	tag := tagFromReleaseURL(loc)
+	if tag == "" {
+		return nil, fmt.Errorf("could not resolve latest release tag (GitHub returned %s, Location %q)", resp.Status, loc)
 	}
-
-	var release Release
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, fmt.Errorf("parse release info: %w", err)
-	}
-	return &release, nil
+	return &Release{TagName: tag}, nil
 }
 
-// FindAsset returns the asset with the given exact name, if present.
-func (r *Release) FindAsset(name string) (*ReleaseAsset, bool) {
-	for i := range r.Assets {
-		if r.Assets[i].Name == name {
-			return &r.Assets[i], true
-		}
+// tagFromReleaseURL extracts the tag name from a
+// https://github.com/OWNER/REPO/releases/tag/TAG URL.
+func tagFromReleaseURL(loc string) string {
+	const marker = "/releases/tag/"
+	i := strings.Index(loc, marker)
+	if i == -1 {
+		return ""
 	}
-	return nil, false
+	return loc[i+len(marker):]
+}
+
+// AssetDownloadURL returns the direct download URL for a named asset
+// attached to release tag - GitHub serves these without going through
+// the rate-limited API.
+func AssetDownloadURL(tag, assetName string) string {
+	return fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", Owner, Repo, tag, assetName)
 }
 
 // Download saves the file at url to destPath, writing to a temporary

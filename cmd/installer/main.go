@@ -33,11 +33,6 @@ func run() error {
 		return err
 	}
 
-	asset, ok := release.FindAsset(updater.AssetName)
-	if !ok {
-		return fmt.Errorf("release %s has no asset named %s", release.TagName, updater.AssetName)
-	}
-
 	exePath := updater.InstalledExePath()
 	_, statErr := os.Stat(exePath)
 	exeExists := statErr == nil
@@ -69,9 +64,10 @@ func run() error {
 	_ = os.Remove(oldPath)
 	_ = os.Rename(exePath, oldPath)
 
-	if err := updater.Download(asset.BrowserDownloadURL, exePath); err != nil {
+	downloadURL := updater.AssetDownloadURL(release.TagName, updater.AssetName)
+	if err := updater.Download(downloadURL, exePath); err != nil {
 		_ = os.Rename(oldPath, exePath) // best-effort rollback
-		return fmt.Errorf("download %s: %w", asset.Name, err)
+		return fmt.Errorf("download %s: %w", updater.AssetName, err)
 	}
 	_ = os.Remove(oldPath)
 
