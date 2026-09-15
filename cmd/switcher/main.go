@@ -377,7 +377,7 @@ func (a *app) switchTo(id string) {
 
 func (a *app) tooltip(currentName string) string {
 	if currentName == "" {
-		return fmt.Sprintf("Audio Output Switcher %s — hotkey %s\nLeft-click: switch now. Right-click: pick a device.", version, hotkeyCombo)
+		currentName = "No active device"
 	}
-	return fmt.Sprintf("Audio Output Switcher %s — active: %s\nLeft-click: switch now. Right-click: pick a device.", version, currentName)
+	return fmt.Sprintf("Audio Output Switcher %s\n%s", version, currentName)
 }
