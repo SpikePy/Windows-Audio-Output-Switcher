@@ -9,7 +9,19 @@ import (
 	"time"
 )
 
+const userAgent = "AudioOutputSwitcher-Installer"
+
 var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// noRedirectClient stops at the first redirect, so LatestRelease can read
+// the tag straight off its Location header instead of fetching the
+// (large, HTML) release page.
+var noRedirectClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // Release identifies the newest published release of Owner/Repo.
 type Release struct {
@@ -28,17 +40,9 @@ func LatestRelease() (*Release, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "AudioOutputSwitcher-Installer")
+	req.Header.Set("User-Agent", userAgent)
 
-	// Don't follow the redirect - the tag name is read straight off its
-	// Location header instead of fetching the (large, HTML) release page.
-	noRedirect := &http.Client{
-		Timeout: httpClient.Timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	resp, err := noRedirect.Do(req)
+	resp, err := noRedirectClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("contact GitHub: %w", err)
 	}
@@ -78,7 +82,7 @@ func Download(url, destPath string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "AudioOutputSwitcher-Installer")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

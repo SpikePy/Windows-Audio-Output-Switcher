@@ -72,22 +72,13 @@ type app struct {
 	deviceSlots [maxDeviceSlots]deviceSlot
 	deviceMu    sync.Mutex
 
-	// cfg holds each known device's saved settings (alias, skip), keyed
-	// by device name (see internal/outputconfig). It's always replaced
-	// wholesale, never mutated in place, so reading it under cfgMu and
-	// then using the returned map after unlocking is safe.
-	cfg   map[string]outputconfig.Entry
-	cfgMu sync.Mutex
-
-	// configModTime is the output config file's mtime as of the last
-	// time it was read (by us writing it, or by picking up an edit made
-	// in the user's editor) - see reloadConfigIfChanged. pollInterval is
-	// how often watchDeviceChanges re-checks in the background -
-	// outputconfig.DefaultPollSeconds unless customized in the config
-	// file; switching an output always re-checks immediately regardless.
-	configModTime time.Time
-	pollInterval  time.Duration
-	configMu      sync.Mutex
+	// cfgMu guards everything loaded from the config file. cfg is always
+	// replaced wholesale, never mutated, so a map read under cfgMu stays
+	// safe to use after unlocking.
+	cfg           map[string]outputconfig.Entry
+	pollInterval  time.Duration // background re-check interval; switches always re-check immediately
+	configModTime time.Time     // file mtime as of the last read or write - see reloadConfigIfChanged
+	cfgMu         sync.Mutex
 
 	mConfigOutputs *systray.MenuItem
 	mExit          *systray.MenuItem
@@ -120,7 +111,7 @@ func main() {
 }
 
 func (a *app) onReady() {
-	systray.SetIcon(icons.IconEnabled)
+	systray.SetIcon(icons.Icon)
 	systray.SetTooltip(a.tooltip(""))
 
 	for i := range a.deviceSlots {
@@ -163,10 +154,7 @@ func (a *app) onExit() {
 // registerHotkey registers a.hotkeyCombo, as loaded from the config file
 // at startup (see main).
 func (a *app) registerHotkey() {
-	a.hotkeyMu.Lock()
-	combo := a.hotkeyCombo
-	a.hotkeyMu.Unlock()
-
+	combo := a.currentHotkey()
 	if err := a.applyHotkey(combo); err != nil {
 		log.Printf("failed to register hotkey %q: %v", combo, err)
 		osd.Show(fmt.Sprintf("Could not register the switch hotkey (%s): %v", combo, err))
@@ -249,29 +237,17 @@ func (a *app) openConfigFile() {
 // that isn't in names, or touching the saved hotkey/poll interval), and
 // updates a.cfg/a.configModTime to match.
 func (a *app) syncConfig(names []string) (map[string]outputconfig.Entry, error) {
-	a.cfgMu.Lock()
-	cfg := a.cfg
-	a.cfgMu.Unlock()
-
-	a.hotkeyMu.Lock()
-	hotkey := a.hotkeyCombo
-	a.hotkeyMu.Unlock()
-
-	a.configMu.Lock()
-	pollSeconds := int(a.pollInterval / time.Second)
-	a.configMu.Unlock()
-
-	merged, err := outputconfig.Sync(hotkey, pollSeconds, names, cfg)
+	pollSeconds := int(a.currentPollInterval() / time.Second)
+	merged, err := outputconfig.Sync(a.currentHotkey(), pollSeconds, names, a.devices())
 	if err != nil {
 		return nil, err
 	}
 
+	modTime := outputconfig.ModTime()
 	a.cfgMu.Lock()
 	a.cfg = merged
+	a.configModTime = modTime
 	a.cfgMu.Unlock()
-	a.configMu.Lock()
-	a.configModTime = outputconfig.ModTime()
-	a.configMu.Unlock()
 	return merged, nil
 }
 
@@ -316,12 +292,12 @@ func openInDefaultApp(path string) error {
 func (a *app) reloadConfigIfChanged() {
 	mt := outputconfig.ModTime()
 
-	a.configMu.Lock()
+	a.cfgMu.Lock()
 	changed := !mt.IsZero() && !mt.Equal(a.configModTime)
 	if changed {
 		a.configModTime = mt
 	}
-	a.configMu.Unlock()
+	a.cfgMu.Unlock()
 
 	if !changed {
 		return
@@ -331,17 +307,10 @@ func (a *app) reloadConfigIfChanged() {
 
 	a.cfgMu.Lock()
 	a.cfg = loaded.Devices
+	a.pollInterval = loaded.EffectivePollInterval()
 	a.cfgMu.Unlock()
 
-	a.configMu.Lock()
-	a.pollInterval = loaded.EffectivePollInterval()
-	a.configMu.Unlock()
-
-	a.hotkeyMu.Lock()
-	current := a.hotkeyCombo
-	a.hotkeyMu.Unlock()
-
-	if newCombo := loaded.EffectiveHotkey(); newCombo != current {
+	if newCombo := loaded.EffectiveHotkey(); newCombo != a.currentHotkey() {
 		if err := a.applyHotkey(newCombo); err != nil {
 			log.Printf("failed to apply new hotkey %q: %v", newCombo, err)
 			osd.Show(fmt.Sprintf("Could not use hotkey %s: %v", newCombo, err))
@@ -351,13 +320,28 @@ func (a *app) reloadConfigIfChanged() {
 	}
 }
 
+func (a *app) devices() map[string]outputconfig.Entry {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	return a.cfg
+}
+
+func (a *app) currentPollInterval() time.Duration {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	return a.pollInterval
+}
+
+func (a *app) currentHotkey() string {
+	a.hotkeyMu.Lock()
+	defer a.hotkeyMu.Unlock()
+	return a.hotkeyCombo
+}
+
 // skipSet returns the set of device names currently excluded from
 // cycling, derived from cfg.
 func (a *app) skipSet() map[string]bool {
-	a.cfgMu.Lock()
-	cfg := a.cfg
-	a.cfgMu.Unlock()
-
+	cfg := a.devices()
 	skip := make(map[string]bool, len(cfg))
 	for name, e := range cfg {
 		if e.Skip {
@@ -370,10 +354,7 @@ func (a *app) skipSet() map[string]bool {
 // displayName returns the alias configured for the device named name,
 // or name itself if it has none - see outputconfig.DisplayName.
 func (a *app) displayName(name string) string {
-	a.cfgMu.Lock()
-	cfg := a.cfg
-	a.cfgMu.Unlock()
-	return outputconfig.DisplayName(cfg, name)
+	return outputconfig.DisplayName(a.devices(), name)
 }
 
 // watchDeviceSlot forwards clicks on one tray menu device entry to a
@@ -398,20 +379,14 @@ func (a *app) watchDeviceSlot(i int) {
 // the meantime. switchOutput/switchTo call syncDeviceMenu directly right
 // after switching, so a switch is never left waiting on this interval.
 func (a *app) watchDeviceChanges() {
-	a.configMu.Lock()
-	interval := a.pollInterval
-	a.configMu.Unlock()
-
+	interval := a.currentPollInterval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
 		a.reloadConfigIfChanged()
 		a.syncDeviceMenu()
 
-		a.configMu.Lock()
-		newInterval := a.pollInterval
-		a.configMu.Unlock()
-		if newInterval != interval {
+		if newInterval := a.currentPollInterval(); newInterval != interval {
 			interval = newInterval
 			ticker.Reset(interval)
 		}
@@ -431,10 +406,7 @@ func (a *app) syncDeviceMenu() {
 		log.Printf("get current device: %v", err)
 	}
 
-	a.cfgMu.Lock()
-	cfg := a.cfg
-	a.cfgMu.Unlock()
-
+	cfg := a.devices()
 	if hasNewDevice(devices, cfg) {
 		if merged, err := a.syncConfig(deviceNames(devices)); err != nil {
 			log.Printf("auto-add new device(s) to config: %v", err)

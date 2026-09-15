@@ -141,7 +141,6 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
-| `internal/aumid`         | Locates a legacy Start Menu shortcut for uninstall cleanup       |
 | `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `devices.yaml` |
 | `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
 | `internal/updater`       | GitHub release lookup/download used by `internal/install`        |

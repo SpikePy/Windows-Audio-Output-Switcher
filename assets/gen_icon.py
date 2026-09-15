@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# Generates icon.ico (colored, "enabled" state + exe icon) and
-# icon_disabled.ico (muted, "disabled" tray state) from scratch with Pillow.
+# Generates icon.ico (the tray icon, also embedded as both .exe icons) from
+# scratch with Pillow.
 # Run: python3 assets/gen_icon.py
 from PIL import Image, ImageDraw, ImageFilter
-import math
 
 SIZE = 512
 SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
@@ -72,7 +71,7 @@ def draw_mixer(draw, cx, cy, scale):
         )
 
 
-def build(size, muted):
+def build(size):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     scale = size / SIZE
@@ -80,30 +79,17 @@ def build(size, muted):
 
     draw_mixer(draw, cx=cx, cy=cy, scale=scale)
 
-    img = add_outline(img, radius_px=size * 0.02)
-
-    if muted:
-        gray = img.convert("LA").convert("RGBA")
-        img = Image.blend(img, gray, 0.85)
-        alpha = img.split()[3].point(lambda a: int(a * 0.7))
-        img.putalpha(alpha)
-
-    return img
+    return add_outline(img, radius_px=size * 0.02)
 
 
 def main():
     # assets/icons is the single source of truth: it's go:embed'ed into the
     # switcher binary for the tray icon, and also fed to the Windows
-    # resource compiler (rsrc) in CI to set the .exe icon.
-    icon = build(SIZE, muted=False)
+    # resource compiler (rsrc) in CI to set both .exe icons.
+    icon = build(SIZE)
     icon.save("assets/icons/icon.ico", sizes=[(s, s) for s in SIZES])
-
-    disabled = build(SIZE, muted=True)
-    disabled.save("assets/icons/icon_disabled.ico", sizes=[(s, s) for s in SIZES])
-
     icon.save("assets/icon_preview.png")
-    disabled.save("assets/icon_disabled_preview.png")
-    print("Wrote assets/icons/icon.ico, assets/icons/icon_disabled.ico (+ PNG previews)")
+    print("Wrote assets/icons/icon.ico (+ PNG preview)")
 
 
 if __name__ == "__main__":

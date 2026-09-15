@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/aumid"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
 
@@ -98,7 +97,7 @@ func Uninstall(version string) error {
 	removeAll(updater.InstalledExePath())
 	removeAll(updater.InstalledExePath() + ".old")
 	removeAll(updater.VersionFilePath())
-	removeAll(aumid.ShortcutPath())
+	removeAll(legacyShortcutPath())
 	// Everything under here - devices.yaml/outputs.yaml, and (up to
 	// v0.9.3) config.json - lives in this one directory, so removing it
 	// wholesale covers every version's settings file in one go.
@@ -106,6 +105,13 @@ func Uninstall(version string) error {
 
 	fmt.Println("Audio Output Switcher has been removed.")
 	return nil
+}
+
+// legacyShortcutPath is the Start Menu shortcut v0.9.11-v0.9.12 created to
+// register an AppUserModelID for toast notifications; nothing creates it
+// anymore, but Uninstall still removes any leftover.
+func legacyShortcutPath() string {
+	return filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Audio Output Switcher.lnk")
 }
 
 func removeAll(path string) {

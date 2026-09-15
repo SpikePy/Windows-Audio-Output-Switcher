@@ -194,7 +194,10 @@ func run() {
 // value must be uintptr-sized for syscall.NewCallback.
 func hookProc(nCode uintptr, wParam uintptr, lParam uintptr) uintptr {
 	if int32(nCode) >= 0 {
-		kb := (*kbdllhookstruct)(unsafe.Pointer(lParam))
+		// Reinterpreting through &lParam (rather than converting lParam
+		// directly) is the go vet-clean way to turn an OS-supplied address
+		// into a pointer.
+		kb := *(**kbdllhookstruct)(unsafe.Pointer(&lParam))
 
 		switch wParam {
 		case wmKeydown, wmSyskeydown:
