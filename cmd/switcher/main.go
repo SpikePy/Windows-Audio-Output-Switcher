@@ -14,9 +14,11 @@ import (
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/configwindow"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/notifier"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 )
 
 // version is set via -ldflags "-X main.version=..." during the release
@@ -49,9 +51,17 @@ type app struct {
 	deviceSlots [maxDeviceSlots]deviceSlot
 	deviceMu    sync.Mutex
 
-	mEnable  *systray.MenuItem
-	mDisable *systray.MenuItem
-	mExit    *systray.MenuItem
+	// skip holds the device names excluded from cycling (see
+	// internal/outputconfig). It's always replaced wholesale, never
+	// mutated in place, so reading it under skipMu and then using the
+	// returned map after unlocking is safe.
+	skip   map[string]bool
+	skipMu sync.Mutex
+
+	mEnable        *systray.MenuItem
+	mDisable       *systray.MenuItem
+	mConfigOutputs *systray.MenuItem
+	mExit          *systray.MenuItem
 }
 
 // logFilePath is where diagnostic output goes. This app has no console
@@ -70,7 +80,7 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	a := &app{enabled: true}
+	a := &app{enabled: true, skip: outputconfig.Load()}
 	systray.Run(a.onReady, a.onExit)
 }
 
@@ -86,6 +96,8 @@ func (a *app) onReady() {
 	}
 	systray.AddSeparator()
 
+	a.mConfigOutputs = systray.AddMenuItem("Configure Outputs...", "Choose which outputs to include when switching")
+	systray.AddSeparator()
 	a.mEnable = systray.AddMenuItem("Enable", "Enable the switch hotkey")
 	a.mDisable = systray.AddMenuItem("Disable", "Disable the switch hotkey")
 	systray.AddSeparator()
@@ -147,6 +159,8 @@ func (a *app) handleHotkey() {
 func (a *app) watchMenu() {
 	for {
 		select {
+		case <-a.mConfigOutputs.ClickedCh:
+			a.openConfigWindow()
 		case <-a.mEnable.ClickedCh:
 			a.setEnabled(true)
 		case <-a.mDisable.ClickedCh:
@@ -155,6 +169,49 @@ func (a *app) watchMenu() {
 			systray.Quit()
 			return
 		}
+	}
+}
+
+// openConfigWindow gathers every device name worth showing - currently
+// active ones, plus any previously excluded name even if that device
+// isn't connected right now - and opens the Configure Outputs window.
+func (a *app) openConfigWindow() {
+	devices, err := a.worker.List()
+	if err != nil {
+		log.Printf("list devices for config window: %v", err)
+	}
+
+	a.skipMu.Lock()
+	skip := a.skip
+	a.skipMu.Unlock()
+
+	seen := make(map[string]bool, len(devices)+len(skip))
+	names := make([]string, 0, len(devices)+len(skip))
+	for _, d := range devices {
+		if !seen[d.Name] {
+			seen[d.Name] = true
+			names = append(names, d.Name)
+		}
+	}
+	for name := range skip {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+
+	configwindow.Open(names, skip, a.onOutputsSaved)
+}
+
+// onOutputsSaved is called from the config window's own thread once the
+// user clicks Save.
+func (a *app) onOutputsSaved(skip map[string]bool) {
+	a.skipMu.Lock()
+	a.skip = skip
+	a.skipMu.Unlock()
+
+	if err := outputconfig.Save(skip); err != nil {
+		log.Printf("saving output config: %v", err)
 	}
 }
 
@@ -221,7 +278,11 @@ func (a *app) syncDeviceMenu() {
 }
 
 func (a *app) switchOutput() {
-	result := a.worker.Next()
+	a.skipMu.Lock()
+	skip := a.skip
+	a.skipMu.Unlock()
+
+	result := a.worker.Next(skip)
 	switch {
 	case result.Err != nil:
 		log.Printf("switch output: %v", result.Err)

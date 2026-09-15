@@ -23,12 +23,19 @@ telling you which one is now active.
   - **Left-click** the tray icon to switch to the next output device.
   - **Right-click** opens a menu listing every currently active output
     device — click one to switch to it directly (the active one is
-    checked) — followed by *Enable*, *Disable* and *Exit*.
+    checked) — followed by *Configure Outputs...*, *Enable*, *Disable*
+    and *Exit*.
   - *Enable*/*Disable* only affects the `Win+S` hotkey; left-click and
     picking a device from the menu always work.
-- **No configuration file, nothing to set up.** The hotkey is fixed and
-  the app has no settings beyond enabled/disabled, which resets to enabled
-  on every restart.
+- **Configure Outputs** opens a small window listing every output
+  (including ones that aren't plugged in right now) with a checkbox for
+  each. Unchecking one excludes it from `Win+S`/left-click/*Next*
+  cycling — it's simply skipped over — without hiding it from the
+  right-click device list, where you can still pick it directly at any
+  time. The choice is saved to
+  `%APPDATA%\AudioOutputSwitcher\outputs.yaml`; a device you've never
+  seen before is included by default, and one you've excluded keeps that
+  setting even while it's disconnected.
 
 It's a single ~8 MB `.exe` with no installation dependencies, no admin
 rights required, and nothing running except while you're logged in.
@@ -114,9 +121,11 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `cmd/switcher`       | The tray application                                             |
 | `cmd/installer`      | Downloads the latest release into the Startup folder             |
 | `cmd/uninstaller`    | Removes everything the installer set up                          |
-| `internal/audio`     | Core Audio API + `IPolicyConfig` bindings                          |
-| `internal/llhotkey`  | Global hotkey via a low-level keyboard hook                      |
-| `internal/hotkeycfg` | Parses hotkey combo strings like `"ctrl+alt+f9"`                  |
-| `internal/notifier`  | Toast notifications                                                |
-| `internal/updater`   | GitHub release lookup/download shared by installer/uninstaller    |
-| `assets/icons`       | Embedded tray/exe icon                                             |
+| `internal/audio`        | Core Audio API + `IPolicyConfig` bindings                       |
+| `internal/llhotkey`     | Global hotkey via a low-level keyboard hook                     |
+| `internal/hotkeycfg`    | Parses hotkey combo strings like `"ctrl+alt+f9"`                |
+| `internal/notifier`     | Toast notifications                                              |
+| `internal/configwindow` | The native "Configure Outputs" window                           |
+| `internal/outputconfig` | Persists excluded outputs to `outputs.yaml`                     |
+| `internal/updater`      | GitHub release lookup/download shared by installer/uninstaller  |
+| `assets/icons`          | Embedded tray/exe icon                                           |

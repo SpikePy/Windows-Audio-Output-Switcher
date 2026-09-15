@@ -6,6 +6,7 @@ require (
 	fyne.io/systray v1.12.2
 	github.com/go-ole/go-ole v1.3.0
 	github.com/moutend/go-wca v0.3.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

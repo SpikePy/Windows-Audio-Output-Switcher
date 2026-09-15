@@ -69,10 +69,11 @@ func (w *Worker) do(task func()) {
 }
 
 // Next switches to the next playback device in the list, wrapping
-// around after the last one.
-func (w *Worker) Next() SwitchResult {
+// around after the last one. Devices whose name is in excluded are
+// skipped over entirely.
+func (w *Worker) Next(excluded map[string]bool) SwitchResult {
 	var result SwitchResult
-	w.do(func() { result = cycleNext() })
+	w.do(func() { result = cycleNext(excluded) })
 	return result
 }
 
@@ -104,13 +105,23 @@ func (w *Worker) Stop() {
 	close(w.quit)
 }
 
-func cycleNext() SwitchResult {
-	devices, err := List()
+func cycleNext(excluded map[string]bool) SwitchResult {
+	all, err := List()
 	if err != nil {
 		return SwitchResult{Err: fmt.Errorf("list devices: %w", err)}
 	}
-	if len(devices) == 0 {
+	if len(all) == 0 {
 		return SwitchResult{Err: errors.New("no active playback devices found")}
+	}
+
+	devices := make([]Device, 0, len(all))
+	for _, d := range all {
+		if !excluded[d.Name] {
+			devices = append(devices, d)
+		}
+	}
+	if len(devices) == 0 {
+		return SwitchResult{Err: errors.New("every output is excluded in Configure Outputs")}
 	}
 	if len(devices) == 1 {
 		return SwitchResult{Device: devices[0]}
@@ -121,6 +132,8 @@ func cycleNext() SwitchResult {
 		return SwitchResult{Err: fmt.Errorf("get current device: %w", err)}
 	}
 
+	// If the current device isn't in the included set (e.g. it was just
+	// excluded), start over from the first included device.
 	nextIndex := 0
 	for i, d := range devices {
 		if d.ID == current.ID {
