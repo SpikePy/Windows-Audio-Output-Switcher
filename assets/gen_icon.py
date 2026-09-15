@@ -12,12 +12,11 @@ SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 # background plate - the glyph sits on a transparent canvas so the tray's
 # own background shows through - so the whole silhouette gets a dark
 # outline (see add_outline below) to stay legible whether the tray behind
-# it is light or dark. The composition itself is also kept to two bold
-# shapes (a speaker plus a small corner badge) rather than thin linework:
-# a full ring-and-arrowheads motif reads fine at 512px but collapses into
-# a smudge once Windows draws it at 16px in the tray.
-SPEAKER = (255, 255, 255)
-SWITCH_COLOR = (46, 230, 168)  # flat mint accent for the "switch" badge
+# it is light or dark. The composition itself is also kept to few, bold
+# shapes rather than thin linework: fine detail reads fine at 512px but
+# collapses into a smudge once Windows draws it at 16px in the tray.
+RAIL = (255, 255, 255)
+HANDLE = (46, 230, 168)  # flat mint accent for each fader's handle
 OUTLINE_COLOR = (18, 18, 26)
 
 
@@ -35,61 +34,49 @@ def add_outline(img, radius_px):
     return Image.alpha_composite(outline, img)
 
 
-def draw_speaker(draw, cx, cy, scale):
-    # Classic "speaker" glyph: a small body plus an expanding horn, in one
-    # polygon. This is the dominant shape - bold and solid so it stays
-    # readable even shrunk to a 16px tray icon.
+# Each fader's knob sits at a different height along its rail - purely
+# for visual variety (a mixing console reads as "audio" partly because
+# its faders are never all level), not any actual meaning.
+FADER_LEVELS = (0.66, 0.30, 0.55, 0.40)
+
+
+def draw_mixer(draw, cx, cy, scale):
+    # A rounded-square frame around a row of vertical fader rails, each
+    # with a round knob crossing it - the classic mixing-console glyph.
+    # Bold strokes and knobs (not hairlines) so it stays readable shrunk
+    # to a 16px tray icon.
     m = scale
-    body_w = 92 * m
-    body_h = 168 * m
-    horn_w = 118 * m
-    horn_h = 296 * m
-    x0 = cx - (body_w + horn_w) / 2
-    points = [
-        (x0, cy - body_h / 2),
-        (x0 + body_w, cy - body_h / 2),
-        (x0 + body_w + horn_w, cy - horn_h / 2),
-        (x0 + body_w + horn_w, cy + horn_h / 2),
-        (x0 + body_w, cy + body_h / 2),
-        (x0, cy + body_h / 2),
-    ]
-    draw.polygon(points, fill=SPEAKER)
 
+    frame_half = 216 * m
+    frame_radius = 70 * m
+    frame_width = 26 * m
+    draw.rounded_rectangle(
+        [cx - frame_half, cy - frame_half, cx + frame_half, cy + frame_half],
+        radius=frame_radius,
+        outline=RAIL,
+        width=round(frame_width),
+    )
 
-def draw_switch_badge(draw, cx, cy, r):
-    # A small solid disc badge (not a thin ring around the whole icon) so
-    # it stays a single clean blob of color at tiny sizes, with a pair of
-    # small cycle arrows inside it that only need to read at larger
-    # sizes - a common "base glyph + corner badge" pattern.
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=SWITCH_COLOR)
+    rail_w = 16 * m
+    rail_half_len = 140 * m
+    knob_r = 34 * m
+    spacing = 108 * m
 
-    ring_r = r * 0.56
-    width = max(1, round(r * 0.28))
-    bbox = [cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r]
-    draw.arc(bbox, start=-160, end=40, fill=SPEAKER, width=width)
-    draw.arc(bbox, start=20, end=220, fill=SPEAKER, width=width)
+    top = cy - rail_half_len
+    bottom = cy + rail_half_len
 
-    def arrowhead(angle_deg):
-        a = math.radians(angle_deg)
-        radial = (math.cos(a), math.sin(a))
-        tangent = (-math.sin(a), math.cos(a))
-        center = (cx + ring_r * radial[0], cy + ring_r * radial[1])
-        head_len = width * 2.4
-        head_w = width * 1.4
-        tip = (
-            center[0] + tangent[0] * head_len * 0.55,
-            center[1] + tangent[1] * head_len * 0.55,
+    for i, level in enumerate(FADER_LEVELS):
+        x = cx + (i - (len(FADER_LEVELS) - 1) / 2) * spacing
+        draw.rounded_rectangle(
+            [x - rail_w / 2, top, x + rail_w / 2, bottom],
+            radius=rail_w / 2,
+            fill=RAIL,
         )
-        base = (
-            center[0] - tangent[0] * head_len * 0.45,
-            center[1] - tangent[1] * head_len * 0.45,
+        knob_y = top + rail_half_len * 2 * level
+        draw.ellipse(
+            [x - knob_r, knob_y - knob_r, x + knob_r, knob_y + knob_r],
+            fill=HANDLE,
         )
-        p1 = (base[0] + radial[0] * head_w, base[1] + radial[1] * head_w)
-        p2 = (base[0] - radial[0] * head_w, base[1] - radial[1] * head_w)
-        draw.polygon([tip, p1, p2], fill=SPEAKER)
-
-    arrowhead(40)
-    arrowhead(220)
 
 
 def build(size, muted):
@@ -98,13 +85,7 @@ def build(size, muted):
     scale = size / SIZE
     cx, cy = size / 2, size / 2
 
-    draw_speaker(draw, cx=cx - size * 0.03, cy=cy, scale=scale * 1.0)
-    draw_switch_badge(
-        draw,
-        cx=cx + size * 0.30,
-        cy=cy + size * 0.30,
-        r=size * 0.24,
-    )
+    draw_mixer(draw, cx=cx, cy=cy, scale=scale)
 
     img = add_outline(img, radius_px=size * 0.02)
 
