@@ -264,6 +264,15 @@ func (a *app) skipSet() map[string]bool {
 	return skip
 }
 
+// displayName returns the alias configured for the device named name,
+// or name itself if it has none - see outputconfig.DisplayName.
+func (a *app) displayName(name string) string {
+	a.cfgMu.Lock()
+	cfg := a.cfg
+	a.cfgMu.Unlock()
+	return outputconfig.DisplayName(cfg, name)
+}
+
 // watchDeviceSlot forwards clicks on one tray menu device entry to a
 // direct switch to that device, whatever device currently occupies the
 // slot.
@@ -308,7 +317,7 @@ func (a *app) syncDeviceMenu() {
 	cfg := a.cfg
 	a.cfgMu.Unlock()
 
-	systray.SetTooltip(a.tooltip(current.Name))
+	systray.SetTooltip(a.tooltip(outputconfig.DisplayName(cfg, current.Name)))
 
 	a.deviceMu.Lock()
 	defer a.deviceMu.Unlock()
@@ -345,9 +354,9 @@ func (a *app) switchOutput() {
 		log.Printf("switch output: %v", result.Err)
 		osd.Show("Could not switch output: " + result.Err.Error())
 	case !result.Switched:
-		osd.Show("Only one output available: " + result.Device.Name)
+		osd.Show("Only one output available: " + a.displayName(result.Device.Name))
 	default:
-		osd.Show(result.Device.Name)
+		osd.Show(a.displayName(result.Device.Name))
 	}
 	a.syncDeviceMenu()
 }
@@ -361,7 +370,7 @@ func (a *app) switchTo(id string) {
 		log.Printf("switch output: %v", result.Err)
 		osd.Show("Could not switch output: " + result.Err.Error())
 	case result.Switched:
-		osd.Show(result.Device.Name)
+		osd.Show(a.displayName(result.Device.Name))
 	}
 	a.syncDeviceMenu()
 }
