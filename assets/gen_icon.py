@@ -8,11 +8,10 @@ import math
 SIZE = 512
 SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 
-BG_TOP = (79, 108, 247)      # #4F6CF7
-BG_BOTTOM = (137, 87, 230)   # #8957E6
+# Flat design: solid colors only, no gradients or drop shadows.
+BG_COLOR = (88, 101, 242)      # flat indigo
 SPEAKER = (255, 255, 255)
-SWITCH_COLOR = (86, 234, 189)   # minty accent for the "switch" motif
-SWITCH_SHADOW = (54, 176, 143)
+SWITCH_COLOR = (46, 230, 168)  # flat mint accent for the "switch" motif
 
 
 def rounded_mask(size, radius):
@@ -22,17 +21,8 @@ def rounded_mask(size, radius):
     return mask
 
 
-def gradient_background(size):
-    base = Image.new("RGB", (size, size))
-    px = base.load()
-    for y in range(size):
-        t = y / (size - 1)
-        r = round(BG_TOP[0] + (BG_BOTTOM[0] - BG_TOP[0]) * t)
-        g = round(BG_TOP[1] + (BG_BOTTOM[1] - BG_TOP[1]) * t)
-        b = round(BG_TOP[2] + (BG_BOTTOM[2] - BG_TOP[2]) * t)
-        for x in range(size):
-            px[x, y] = (r, g, b)
-    return base
+def flat_background(size):
+    return Image.new("RGB", (size, size), BG_COLOR)
 
 
 def draw_speaker(draw, cx, cy, scale, size_mult=1.0):
@@ -54,11 +44,10 @@ def draw_speaker(draw, cx, cy, scale, size_mult=1.0):
     draw.polygon(points, fill=SPEAKER)
 
 
-def draw_switch_arrows(draw, cx, cy, radius, width, color, shadow):
+def draw_switch_arrows(draw, cx, cy, radius, width, color):
     bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
-    # Two opposing arcs forming a circular "swap/cycle" motif.
-    draw.arc(bbox, start=-160, end=40, fill=shadow, width=width + 6)
-    draw.arc(bbox, start=20, end=220, fill=shadow, width=width + 6)
+    # Two opposing arcs forming a circular "swap/cycle" motif - a single
+    # flat stroke each, no shadow/bevel layer underneath.
     draw.arc(bbox, start=-160, end=40, fill=color, width=width)
     draw.arc(bbox, start=20, end=220, fill=color, width=width)
 
@@ -91,7 +80,7 @@ def draw_switch_arrows(draw, cx, cy, radius, width, color, shadow):
 
 
 def build(size, muted):
-    bg = gradient_background(size)
+    bg = flat_background(size)
     mask = rounded_mask(size, radius=int(size * 0.22))
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     img.paste(bg, (0, 0), mask)
@@ -109,7 +98,6 @@ def build(size, muted):
         radius=size * 0.30,
         width=max(2, round(size * 0.048)),
         color=SWITCH_COLOR,
-        shadow=SWITCH_SHADOW,
     )
     draw_speaker(draw, cx=cx, cy=cy, scale=scale, size_mult=0.78)
 
