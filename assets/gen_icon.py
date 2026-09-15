@@ -35,12 +35,13 @@ def gradient_background(size):
     return base
 
 
-def draw_speaker(draw, cx, cy, scale):
+def draw_speaker(draw, cx, cy, scale, size_mult=1.0):
     # Classic "speaker" glyph: a small body plus an expanding horn, in one polygon.
-    body_w = 70 * scale
-    body_h = 130 * scale
-    horn_w = 90 * scale
-    horn_h = 230 * scale
+    m = scale * size_mult
+    body_w = 70 * m
+    body_h = 130 * m
+    horn_w = 90 * m
+    horn_h = 230 * m
     x0 = cx - (body_w + horn_w) / 2
     points = [
         (x0, cy - body_h / 2),
@@ -90,16 +91,20 @@ def build(size, muted):
 
     draw = ImageDraw.Draw(img)
     scale = size / SIZE
-    draw_speaker(draw, cx=size * 0.34, cy=size * 0.52, scale=scale)
+    cx, cy = size / 2, size / 2
+
+    # A speaker sitting inside a circular loop of arrows: the loop reads as
+    # "switch/cycle", the speaker as "audio output".
     draw_switch_arrows(
         draw,
-        cx=size * 0.665,
-        cy=size * 0.52,
-        radius=size * 0.175,
-        width=max(2, round(size * 0.045)),
+        cx=cx,
+        cy=cy,
+        radius=size * 0.30,
+        width=max(2, round(size * 0.048)),
         color=SWITCH_COLOR,
         shadow=SWITCH_SHADOW,
     )
+    draw_speaker(draw, cx=cx, cy=cy, scale=scale, size_mult=0.78)
 
     if muted:
         gray = img.convert("LA").convert("RGBA")
