@@ -14,11 +14,10 @@ import (
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/aumid"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/configwindow"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/notifier"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/osd"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 )
 
@@ -84,12 +83,6 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	if exePath, err := os.Executable(); err != nil {
-		log.Printf("resolving own exe path: %v", err)
-	} else if err := aumid.Ensure(exePath); err != nil {
-		log.Printf("registering AppUserModelID: %v", err)
-	}
-
 	a := &app{skip: outputconfig.Load()}
 	systray.Run(a.onReady, a.onExit)
 }
@@ -144,8 +137,7 @@ func (a *app) registerHotkey() {
 	hk := llhotkey.New(mods.Ctrl, mods.Alt, mods.Shift, mods.Win, key)
 	if err := llhotkey.Register(hk); err != nil {
 		log.Printf("failed to register hotkey %q: %v", hotkeyCombo, err)
-		notifier.Show("Audio Output Switcher",
-			fmt.Sprintf("Could not register the switch hotkey (%s): %v", hotkeyCombo, err))
+		osd.Show(fmt.Sprintf("Could not register the switch hotkey (%s): %v", hotkeyCombo, err))
 		return
 	}
 
@@ -294,11 +286,11 @@ func (a *app) switchOutput() {
 	switch {
 	case result.Err != nil:
 		log.Printf("switch output: %v", result.Err)
-		notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
+		osd.Show("Could not switch output: " + result.Err.Error())
 	case !result.Switched:
-		notifier.Show("Audio Output Switcher", "Only one output available: "+result.Device.Name)
+		osd.Show("Only one output available: " + result.Device.Name)
 	default:
-		notifier.Show("Audio output switched", result.Device.Name)
+		osd.Show(result.Device.Name)
 	}
 	a.syncDeviceMenu()
 }
@@ -310,9 +302,9 @@ func (a *app) switchTo(id string) {
 	switch {
 	case result.Err != nil:
 		log.Printf("switch output: %v", result.Err)
-		notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
+		osd.Show("Could not switch output: " + result.Err.Error())
 	case result.Switched:
-		notifier.Show("Audio output switched", result.Device.Name)
+		osd.Show(result.Device.Name)
 	}
 	a.syncDeviceMenu()
 }
