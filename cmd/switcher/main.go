@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"sync"
+	"time"
 
 	"fyne.io/systray"
 	"golang.design/x/hotkey"
@@ -20,12 +22,26 @@ import (
 // build; it stays "dev" for local builds.
 var version = "dev"
 
+// maxDeviceSlots caps how many playback devices can be listed in the tray
+// menu at once. Slots are pre-created and hidden/shown as the device list
+// changes, since the tray library has no way to insert or reorder menu
+// items after the fact.
+const maxDeviceSlots = 16
+
+type deviceSlot struct {
+	item *systray.MenuItem
+	id   string
+}
+
 type app struct {
 	cfg     appstate.Config
 	enabled bool
 
 	worker *audio.Worker
 	hk     *hotkey.Hotkey
+
+	deviceSlots [maxDeviceSlots]deviceSlot
+	deviceMu    sync.Mutex
 
 	mEnable  *systray.MenuItem
 	mDisable *systray.MenuItem
@@ -47,20 +63,30 @@ func (a *app) onReady() {
 	systray.SetIcon(a.iconBytes())
 	systray.SetTooltip(a.tooltip())
 
+	for i := range a.deviceSlots {
+		item := systray.AddMenuItemCheckbox("", "", false)
+		item.Hide()
+		a.deviceSlots[i].item = item
+		go a.watchDeviceSlot(i)
+	}
+	systray.AddSeparator()
+
 	a.mEnable = systray.AddMenuItem("Enable", "Enable audio output switching")
 	a.mDisable = systray.AddMenuItem("Disable", "Disable audio output switching")
 	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
 	a.updateMenuState()
 
-	// Left click toggles enabled/disabled; right click falls back to the
-	// default context menu built above.
+	// Left click toggles enabled/disabled; right click shows the menu
+	// built above, listing every output device plus Enable/Disable/Exit.
 	systray.SetOnTapped(a.toggleEnabled)
 
 	a.worker = audio.StartWorker()
 	a.registerHotkey()
+	a.syncDeviceMenu()
 
 	go a.watchMenu()
+	go a.watchDeviceChanges()
 }
 
 func (a *app) onExit() {
@@ -113,6 +139,68 @@ func (a *app) watchMenu() {
 	}
 }
 
+// watchDeviceSlot forwards clicks on one tray menu device entry to a
+// direct switch to that device, whatever device currently occupies the
+// slot.
+func (a *app) watchDeviceSlot(i int) {
+	for range a.deviceSlots[i].item.ClickedCh {
+		a.deviceMu.Lock()
+		id := a.deviceSlots[i].id
+		a.deviceMu.Unlock()
+		if id != "" {
+			a.switchTo(id)
+		}
+	}
+}
+
+// watchDeviceChanges periodically refreshes the device menu so plugging
+// or unplugging a device (or switching it elsewhere) is reflected without
+// requiring a restart.
+func (a *app) watchDeviceChanges() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		a.syncDeviceMenu()
+	}
+}
+
+// syncDeviceMenu re-reads the list of active playback devices and updates
+// the tray menu's device entries (label, checkmark, visibility) to match.
+func (a *app) syncDeviceMenu() {
+	devices, err := a.worker.List()
+	if err != nil {
+		log.Printf("list devices: %v", err)
+		return
+	}
+	current, err := a.worker.Current()
+	if err != nil {
+		log.Printf("get current device: %v", err)
+	}
+
+	a.deviceMu.Lock()
+	defer a.deviceMu.Unlock()
+
+	for i := range a.deviceSlots {
+		item := a.deviceSlots[i].item
+		if i >= len(devices) {
+			item.Hide()
+			a.deviceSlots[i].id = ""
+			continue
+		}
+
+		d := devices[i]
+		item.SetTitle(d.Name)
+		item.SetTooltip("Switch to " + d.Name)
+		a.deviceSlots[i].id = d.ID
+		if d.ID == current.ID {
+			item.Check()
+		} else {
+			item.Uncheck()
+		}
+		item.Show()
+	}
+}
+
 func (a *app) switchOutput() {
 	result := a.worker.Next()
 	switch {
@@ -124,6 +212,21 @@ func (a *app) switchOutput() {
 	default:
 		_ = notifier.Show("Audio output switched", result.Device.Name)
 	}
+	a.syncDeviceMenu()
+}
+
+// switchTo makes the device with the given ID active directly, as
+// requested from the tray menu's device list.
+func (a *app) switchTo(id string) {
+	result := a.worker.SwitchTo(id)
+	switch {
+	case result.Err != nil:
+		log.Printf("switch output: %v", result.Err)
+		_ = notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
+	case result.Switched:
+		_ = notifier.Show("Audio output switched", result.Device.Name)
+	}
+	a.syncDeviceMenu()
 }
 
 func (a *app) toggleEnabled() {

@@ -15,11 +15,16 @@ telling you which one is now active.
   Windows sound settings.
 - **Shows a toast notification on every switch**, naming the device that is
   now active, so you get instant confirmation of what you just switched to.
+  Pressing the hotkey again quickly replaces the previous toast instead of
+  piling up a stack of them.
 - **Lives in the system tray** with a small icon that reflects whether
   switching is currently enabled:
   - **Left-click** the tray icon to toggle switching on/off.
-  - **Right-click** opens a menu with *Enable*, *Disable* and *Exit*.
-  - While disabled, the hotkey is ignored and the icon turns grey.
+  - **Right-click** opens a menu listing every currently active output
+    device — click one to switch to it directly — followed by *Enable*,
+    *Disable* and *Exit*. The currently active device is checked.
+  - While disabled, the hotkey is ignored and the icon turns grey; picking a
+    device from the menu still works either way.
 - **Remembers its settings** (hotkey and enabled/disabled state) across
   restarts, in `%APPDATA%\AudioOutputSwitcher\config.json`.
 
@@ -28,7 +33,7 @@ rights required, and nothing running except while you're logged in.
 
 ## Installing
 
-1. Grab `AudioOutputSwitcherSetup.exe` from the
+1. Grab `AudioOutputSwitcherInstall.exe` from the
    [latest release](../../releases/latest) and run it.
 2. It downloads the newest `AudioOutputSwitcher.exe`, places it in your
    Startup folder, and starts it immediately — no reboot needed.
@@ -74,7 +79,7 @@ Requires Go 1.24+. All commands target `windows/amd64`:
 
 ```sh
 GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcher.exe ./cmd/switcher
-GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcherSetup.exe ./cmd/installer
+GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcherInstall.exe ./cmd/installer
 GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcherUninstall.exe ./cmd/uninstaller
 ```
 

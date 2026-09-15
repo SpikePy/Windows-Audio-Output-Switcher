@@ -10,11 +10,11 @@ import (
 	"github.com/go-ole/go-ole"
 )
 
-// SwitchResult describes the outcome of one "switch to the next device"
+// SwitchResult describes the outcome of one "switch the active device"
 // request.
 type SwitchResult struct {
 	Device   Device
-	Switched bool // false when there was nothing to switch to
+	Switched bool // false when there was nothing to switch to, or the requested device was already active
 	Err      error
 }
 
@@ -24,15 +24,15 @@ type SwitchResult struct {
 // instead of initializing COM ad-hoc on whichever goroutine happens to
 // need it.
 type Worker struct {
-	requests chan chan SwitchResult
-	quit     chan struct{}
+	tasks chan func()
+	quit  chan struct{}
 }
 
 // StartWorker launches the worker goroutine and returns immediately.
 func StartWorker() *Worker {
 	w := &Worker{
-		requests: make(chan chan SwitchResult),
-		quit:     make(chan struct{}),
+		tasks: make(chan func()),
+		quit:  make(chan struct{}),
 	}
 	go w.run()
 	return w
@@ -50,20 +50,53 @@ func (w *Worker) run() {
 
 	for {
 		select {
-		case reply := <-w.requests:
-			reply <- cycleNext()
+		case task := <-w.tasks:
+			task()
 		case <-w.quit:
 			return
 		}
 	}
 }
 
-// Next asks the worker to switch to the next playback device and blocks
-// until it has done so.
+// do runs task on the worker's COM thread and blocks until it's done.
+func (w *Worker) do(task func()) {
+	done := make(chan struct{})
+	w.tasks <- func() {
+		task()
+		close(done)
+	}
+	<-done
+}
+
+// Next switches to the next playback device in the list, wrapping
+// around after the last one.
 func (w *Worker) Next() SwitchResult {
-	reply := make(chan SwitchResult, 1)
-	w.requests <- reply
-	return <-reply
+	var result SwitchResult
+	w.do(func() { result = cycleNext() })
+	return result
+}
+
+// SwitchTo makes the device identified by id the active one directly.
+func (w *Worker) SwitchTo(id string) SwitchResult {
+	var result SwitchResult
+	w.do(func() { result = switchToID(id) })
+	return result
+}
+
+// List returns every currently active playback device.
+func (w *Worker) List() ([]Device, error) {
+	var devices []Device
+	var err error
+	w.do(func() { devices, err = List() })
+	return devices, err
+}
+
+// Current returns the currently active playback device.
+func (w *Worker) Current() (Device, error) {
+	var current Device
+	var err error
+	w.do(func() { current, err = Current() })
+	return current, err
 }
 
 // Stop shuts the worker goroutine down.
@@ -101,4 +134,31 @@ func cycleNext() SwitchResult {
 		return SwitchResult{Err: fmt.Errorf("set default device: %w", err)}
 	}
 	return SwitchResult{Device: next, Switched: true}
+}
+
+func switchToID(id string) SwitchResult {
+	devices, err := List()
+	if err != nil {
+		return SwitchResult{Err: fmt.Errorf("list devices: %w", err)}
+	}
+
+	var target *Device
+	for i := range devices {
+		if devices[i].ID == id {
+			target = &devices[i]
+			break
+		}
+	}
+	if target == nil {
+		return SwitchResult{Err: errors.New("selected device is no longer available")}
+	}
+
+	if current, err := Current(); err == nil && current.ID == target.ID {
+		return SwitchResult{Device: *target}
+	}
+
+	if err := SetDefault(target.ID); err != nil {
+		return SwitchResult{Err: fmt.Errorf("set default device: %w", err)}
+	}
+	return SwitchResult{Device: *target, Switched: true}
 }
