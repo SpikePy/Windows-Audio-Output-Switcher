@@ -429,5 +429,5 @@ func (a *app) tooltip(currentName string) string {
 	if currentName == "" {
 		currentName = "No active device"
 	}
-	return fmt.Sprintf("Audio Output Switcher %s\n%s", version, currentName)
+	return fmt.Sprintf("Audio Output Switcher %s — %s", version, currentName)
 }
