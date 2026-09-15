@@ -6,15 +6,17 @@ overlay telling you which one is now active.
 
 ## What it does
 
-- **Cycles the default playback device.** Press **Win+S**, left-click the
-  tray icon, or pick a device from the right-click menu, and Windows'
-  default audio output moves to the next active playback device in the
-  list, wrapping back to the first one after the last. This updates the
-  default for all three roles Windows tracks (console, multimedia,
-  communications), so it takes effect for every application immediately —
-  the same as changing it by hand in the Windows sound settings.
+- **Cycles the default playback device.** Press **Win+S** (the default
+  hotkey, changeable — see *Configure* below), left-click the tray icon,
+  or pick a device from the right-click menu, and Windows' default audio
+  output moves to the next active playback device in the list, wrapping
+  back to the first one after the last. This updates the default for all
+  three roles Windows tracks (console, multimedia, communications), so it
+  takes effect for every application immediately — the same as changing
+  it by hand in the Windows sound settings.
 - **`Win+S` actually works for this**, even though Windows normally
-  reserves it for Search. See [how](#binding-win-shortcuts) below.
+  reserves it for Search (same goes for any other reserved combo you
+  configure it to instead). See [how](#binding-win-shortcuts) below.
 - **Shows an on-screen overlay on every switch** — styled after Windows'
   own volume/brightness OSD, not a toast notification — naming the device
   (or its alias, see below) that is now active, so you get instant
@@ -28,18 +30,28 @@ overlay telling you which one is now active.
     checked) — followed by *Configure* and *Exit*.
 - **Configure** opens `%APPDATA%\AudioOutputSwitcher\devices.yaml` in
   whatever app Windows has associated with `.yaml` files, for you to
-  hand-edit. It's kept in sync with every device that's ever been seen —
-  a newly connected device is added automatically, and a disconnected one
-  keeps its row (never deleted automatically, only by editing it out
-  yourself) — with, per device:
-  - `alias` — the name shown for it in the right-click menu and the OSD;
-    defaults to the real device name.
-  - `skip` — set to `true` to leave it out of `Win+S`/left-click cycling.
-    It's still shown in the right-click menu (as "*(excluded)*") and stays
-    fully clickable there, so you can switch to it directly at any time.
-  - `last_seen` — when it was last detected as active, updated
-    automatically; useful for spotting stale entries worth deleting by
-    hand.
+  hand-edit:
+  - `hotkey` — the global shortcut, e.g. `win+s` or `ctrl+alt+f9`;
+    defaults to `win+s` if left blank. Switching to a bad or unregistrable
+    value keeps whatever hotkey was already working active instead of
+    leaving you with none.
+  - `poll_seconds` — how often, in the background, to check for
+    plugged/unplugged devices and pick up hand-edits to this file;
+    defaults to `60` if left blank or set to `0` or less. Switching
+    outputs always re-checks immediately regardless of this interval.
+  - `outputs` — kept in sync with every device that's ever been seen: a
+    newly connected device is added automatically, and a disconnected one
+    keeps its row (never deleted automatically, only by editing it out
+    yourself) — with, per device:
+    - `alias` — the name shown for it in the right-click menu and the
+      OSD; defaults to the real device name.
+    - `skip` — set to `true` to leave it out of hotkey/left-click
+      cycling. It's still shown in the right-click menu (as
+      "*(excluded)*") and stays fully clickable there, so you can switch
+      to it directly at any time.
+    - `last_seen` — when it was last detected as active, updated
+      automatically; useful for spotting stale entries worth deleting by
+      hand.
 
   Edits are picked up automatically, no restart needed.
 
@@ -130,7 +142,7 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
 | `internal/aumid`         | Locates a legacy Start Menu shortcut for uninstall cleanup       |
-| `internal/outputconfig`  | Persists per-device alias/skip settings to `devices.yaml`        |
+| `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `devices.yaml` |
 | `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
 | `internal/updater`       | GitHub release lookup/download used by `internal/install`        |
 | `assets/icons`           | Embedded tray/exe icon                                           |

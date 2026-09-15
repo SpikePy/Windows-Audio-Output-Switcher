@@ -32,12 +32,6 @@ const createNoWindow = 0x08000000
 // build; it stays "dev" for local builds.
 var version = "dev"
 
-// hotkeyCombo is the fixed global shortcut that cycles the active output
-// device. It's intentionally not user-configurable (no config file):
-// Win+S is normally reserved by the shell for Search, but internal/llhotkey
-// intercepts it via a low-level keyboard hook before the shell sees it.
-const hotkeyCombo = "win+s"
-
 // maxDeviceSlots caps how many playback devices can be listed in the tray
 // menu at once. Slots are pre-created and hidden/shown as the device list
 // changes, since the tray library has no way to insert or reorder menu
@@ -58,7 +52,14 @@ type deviceSlot struct {
 
 type app struct {
 	worker *audio.Worker
-	hk     *llhotkey.Hotkey
+
+	// hk and hotkeyCombo are the currently-registered global hotkey and
+	// the combo string (see internal/hotkeycfg) it was built from -
+	// outputconfig.DefaultHotkey ("win+s") if never customized in the
+	// config file. Always changed together via applyHotkey.
+	hk          *llhotkey.Hotkey
+	hotkeyCombo string
+	hotkeyMu    sync.Mutex
 
 	// switchMu serializes switchOutput/switchTo end to end - from
 	// performing the switch through announcing it in the OSD - across
@@ -80,8 +81,12 @@ type app struct {
 
 	// configModTime is the output config file's mtime as of the last
 	// time it was read (by us writing it, or by picking up an edit made
-	// in the user's editor) - see reloadConfigIfChanged.
+	// in the user's editor) - see reloadConfigIfChanged. pollInterval is
+	// how often watchDeviceChanges re-checks in the background -
+	// outputconfig.DefaultPollSeconds unless customized in the config
+	// file; switching an output always re-checks immediately regardless.
 	configModTime time.Time
+	pollInterval  time.Duration
 	configMu      sync.Mutex
 
 	mConfigOutputs *systray.MenuItem
@@ -104,7 +109,13 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	a := &app{cfg: outputconfig.Load(), configModTime: outputconfig.ModTime()}
+	loaded := outputconfig.Load()
+	a := &app{
+		cfg:           loaded.Devices,
+		configModTime: outputconfig.ModTime(),
+		hotkeyCombo:   loaded.EffectiveHotkey(),
+		pollInterval:  loaded.EffectivePollInterval(),
+	}
 	systray.Run(a.onReady, a.onExit)
 }
 
@@ -120,7 +131,7 @@ func (a *app) onReady() {
 	}
 	systray.AddSeparator()
 
-	a.mConfigOutputs = systray.AddMenuItem("Configure", "Open the device config file to rename or exclude outputs")
+	a.mConfigOutputs = systray.AddMenuItem("Configure", "Open the config file to rename/exclude outputs or change the hotkey")
 	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
 
@@ -137,8 +148,11 @@ func (a *app) onReady() {
 }
 
 func (a *app) onExit() {
-	if a.hk != nil {
-		llhotkey.Unregister(a.hk)
+	a.hotkeyMu.Lock()
+	hk := a.hk
+	a.hotkeyMu.Unlock()
+	if hk != nil {
+		llhotkey.Unregister(hk)
 	}
 	llhotkey.Stop()
 	if a.worker != nil {
@@ -146,28 +160,50 @@ func (a *app) onExit() {
 	}
 }
 
+// registerHotkey registers a.hotkeyCombo, as loaded from the config file
+// at startup (see main).
 func (a *app) registerHotkey() {
-	mods, key, err := hotkeycfg.Parse(hotkeyCombo)
-	if err != nil {
-		// hotkeyCombo is a compile-time constant; a parse failure here
-		// is a programming error, not a runtime condition to recover
-		// from gracefully.
-		log.Fatalf("invalid built-in hotkey %q: %v", hotkeyCombo, err)
-	}
+	a.hotkeyMu.Lock()
+	combo := a.hotkeyCombo
+	a.hotkeyMu.Unlock()
 
-	hk := llhotkey.New(mods.Ctrl, mods.Alt, mods.Shift, mods.Win, key)
-	if err := llhotkey.Register(hk); err != nil {
-		log.Printf("failed to register hotkey %q: %v", hotkeyCombo, err)
-		osd.Show(fmt.Sprintf("Could not register the switch hotkey (%s): %v", hotkeyCombo, err))
-		return
+	if err := a.applyHotkey(combo); err != nil {
+		log.Printf("failed to register hotkey %q: %v", combo, err)
+		osd.Show(fmt.Sprintf("Could not register the switch hotkey (%s): %v", combo, err))
 	}
-
-	a.hk = hk
-	go a.handleHotkey()
 }
 
-func (a *app) handleHotkey() {
-	for range a.hk.Keydown() {
+// applyHotkey parses and registers combo as the active global hotkey,
+// only swapping out whatever was previously registered (if any) once
+// the new one is confirmed working - so a bad hand-edit of the config
+// file's hotkey never leaves the app with no working hotkey at all.
+func (a *app) applyHotkey(combo string) error {
+	mods, key, err := hotkeycfg.Parse(combo)
+	if err != nil {
+		return err
+	}
+
+	newHk := llhotkey.New(mods.Ctrl, mods.Alt, mods.Shift, mods.Win, key)
+	if err := llhotkey.Register(newHk); err != nil {
+		return err
+	}
+
+	a.hotkeyMu.Lock()
+	oldHk := a.hk
+	a.hk = newHk
+	a.hotkeyCombo = combo
+	a.hotkeyMu.Unlock()
+
+	if oldHk != nil {
+		llhotkey.Unregister(oldHk)
+	}
+
+	go a.handleHotkey(newHk)
+	return nil
+}
+
+func (a *app) handleHotkey(hk *llhotkey.Hotkey) {
+	for range hk.Keydown() {
 		a.switchOutput()
 	}
 }
@@ -184,11 +220,11 @@ func (a *app) watchMenu() {
 	}
 }
 
-// openConfigFile (re)writes the output config file so it lists every
-// currently known device - active ones, plus any previously excluded
-// name even if that device isn't connected right now - then opens it in
-// whatever application Windows has associated with .yaml files, for the
-// user to hand-edit.
+// openConfigFile (re)writes the config file so it lists every currently
+// known device - active ones, plus any previously excluded name even if
+// that device isn't connected right now - then opens it in whatever
+// application Windows has associated with .yaml files, for the user to
+// hand-edit (devices, or the hotkey).
 func (a *app) openConfigFile() {
 	devices, err := a.worker.List()
 	if err != nil {
@@ -210,13 +246,22 @@ func (a *app) openConfigFile() {
 // syncConfig writes the config file via outputconfig.Sync (adding any
 // name in names it doesn't already have an entry for, refreshing
 // LastSeen for all of them, and never dropping an entry for a device
-// that isn't in names), and updates a.cfg/a.configModTime to match.
+// that isn't in names, or touching the saved hotkey/poll interval), and
+// updates a.cfg/a.configModTime to match.
 func (a *app) syncConfig(names []string) (map[string]outputconfig.Entry, error) {
 	a.cfgMu.Lock()
 	cfg := a.cfg
 	a.cfgMu.Unlock()
 
-	merged, err := outputconfig.Sync(names, cfg)
+	a.hotkeyMu.Lock()
+	hotkey := a.hotkeyCombo
+	a.hotkeyMu.Unlock()
+
+	a.configMu.Lock()
+	pollSeconds := int(a.pollInterval / time.Second)
+	a.configMu.Unlock()
+
+	merged, err := outputconfig.Sync(hotkey, pollSeconds, names, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +309,10 @@ func openInDefaultApp(path string) error {
 
 // reloadConfigIfChanged picks up an edit made outside the app (i.e. in
 // whatever editor openConfigFile opened) by comparing the config file's
-// mtime against the last time it was read.
+// mtime against the last time it was read - device settings, and the
+// hotkey if it changed to something that still parses and registers
+// (an edit that doesn't is logged and otherwise ignored, leaving
+// whatever hotkey was already working active).
 func (a *app) reloadConfigIfChanged() {
 	mt := outputconfig.ModTime()
 
@@ -279,9 +327,28 @@ func (a *app) reloadConfigIfChanged() {
 		return
 	}
 
+	loaded := outputconfig.Load()
+
 	a.cfgMu.Lock()
-	a.cfg = outputconfig.Load()
+	a.cfg = loaded.Devices
 	a.cfgMu.Unlock()
+
+	a.configMu.Lock()
+	a.pollInterval = loaded.EffectivePollInterval()
+	a.configMu.Unlock()
+
+	a.hotkeyMu.Lock()
+	current := a.hotkeyCombo
+	a.hotkeyMu.Unlock()
+
+	if newCombo := loaded.EffectiveHotkey(); newCombo != current {
+		if err := a.applyHotkey(newCombo); err != nil {
+			log.Printf("failed to apply new hotkey %q: %v", newCombo, err)
+			osd.Show(fmt.Sprintf("Could not use hotkey %s: %v", newCombo, err))
+		} else {
+			osd.Show("Hotkey set to " + newCombo)
+		}
+	}
 }
 
 // skipSet returns the set of device names currently excluded from
@@ -323,16 +390,31 @@ func (a *app) watchDeviceSlot(i int) {
 	}
 }
 
-// watchDeviceChanges periodically refreshes the device menu so plugging
-// or unplugging a device (or switching it elsewhere) is reflected
-// without requiring a restart, and picks up edits made to the output
-// config file in the meantime.
+// watchDeviceChanges periodically refreshes the device menu - at
+// a.pollInterval, outputconfig.DefaultPollSeconds unless customized in
+// the config file, picked up live if it's changed - so plugging or
+// unplugging a device (or switching it elsewhere) is reflected without
+// requiring a restart, and picks up edits made to the config file in
+// the meantime. switchOutput/switchTo call syncDeviceMenu directly right
+// after switching, so a switch is never left waiting on this interval.
 func (a *app) watchDeviceChanges() {
-	ticker := time.NewTicker(5 * time.Second)
+	a.configMu.Lock()
+	interval := a.pollInterval
+	a.configMu.Unlock()
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
 		a.reloadConfigIfChanged()
 		a.syncDeviceMenu()
+
+		a.configMu.Lock()
+		newInterval := a.pollInterval
+		a.configMu.Unlock()
+		if newInterval != interval {
+			interval = newInterval
+			ticker.Reset(interval)
+		}
 	}
 }
 
