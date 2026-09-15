@@ -23,16 +23,15 @@ telling you which one is now active.
   - **Left-click** the tray icon to switch to the next output device.
   - **Right-click** opens a menu listing every currently active output
     device — click one to switch to it directly (the active one is
-    checked) — followed by *Configure Outputs...*, *Enable*, *Disable*
-    and *Exit*.
-  - *Enable*/*Disable* only affects the `Win+S` hotkey; left-click and
-    picking a device from the menu always work.
+    checked) — followed by *Configure Outputs...* and *Exit*.
 - **Configure Outputs** opens a small window listing every output
   (including ones that aren't plugged in right now) with a checkbox for
-  each. Unchecking one excludes it from `Win+S`/left-click/*Next*
-  cycling — it's simply skipped over — without hiding it from the
-  right-click device list, where you can still pick it directly at any
-  time. The choice is saved to
+  each. Unchecking one excludes it from `Win+S`/left-click cycling — it's
+  simply skipped over, and shown as "*(excluded from cycling)*" in the
+  right-click device list — but stays fully clickable there, so you can
+  still switch to it directly at any time. (Windows menu items can't be
+  greyed out without also disabling the click, so this label is the
+  closest equivalent that keeps it usable.) The choice is saved to
   `%APPDATA%\AudioOutputSwitcher\outputs.yaml`; a device you've never
   seen before is included by default, and one you've excluded keeps that
   setting even while it's disconnected.

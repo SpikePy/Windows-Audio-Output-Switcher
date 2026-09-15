@@ -37,14 +37,19 @@ const hotkeyCombo = "win+s"
 // items after the fact.
 const maxDeviceSlots = 16
 
+// excludedSuffix marks a device excluded from cycling in the menu. Windows
+// menu items can't be greyed out while staying clickable (MF_GRAYED also
+// blocks the click at the OS level, and the tray library has no
+// owner-draw hook to fake it), so excluded devices are marked in the
+// label instead - they stay fully clickable for a direct, one-off switch.
+const excludedSuffix = "  (excluded from cycling)"
+
 type deviceSlot struct {
 	item *systray.MenuItem
 	id   string
 }
 
 type app struct {
-	enabled bool
-
 	worker *audio.Worker
 	hk     *llhotkey.Hotkey
 
@@ -58,8 +63,6 @@ type app struct {
 	skip   map[string]bool
 	skipMu sync.Mutex
 
-	mEnable        *systray.MenuItem
-	mDisable       *systray.MenuItem
 	mConfigOutputs *systray.MenuItem
 	mExit          *systray.MenuItem
 }
@@ -80,12 +83,12 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	a := &app{enabled: true, skip: outputconfig.Load()}
+	a := &app{skip: outputconfig.Load()}
 	systray.Run(a.onReady, a.onExit)
 }
 
 func (a *app) onReady() {
-	systray.SetIcon(a.iconBytes())
+	systray.SetIcon(icons.IconEnabled)
 	systray.SetTooltip(a.tooltip())
 
 	for i := range a.deviceSlots {
@@ -98,15 +101,10 @@ func (a *app) onReady() {
 
 	a.mConfigOutputs = systray.AddMenuItem("Configure Outputs...", "Choose which outputs to include when switching")
 	systray.AddSeparator()
-	a.mEnable = systray.AddMenuItem("Enable", "Enable the switch hotkey")
-	a.mDisable = systray.AddMenuItem("Disable", "Disable the switch hotkey")
-	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
-	a.updateMenuState()
 
 	// Left click switches to the next output device directly, same as
-	// the hotkey; right click shows the menu built above, listing every
-	// output device plus Enable/Disable/Exit.
+	// the hotkey; right click shows the menu built above.
 	systray.SetOnTapped(a.switchOutput)
 
 	a.worker = audio.StartWorker()
@@ -150,9 +148,7 @@ func (a *app) registerHotkey() {
 
 func (a *app) handleHotkey() {
 	for range a.hk.Keydown() {
-		if a.enabled {
-			a.switchOutput()
-		}
+		a.switchOutput()
 	}
 }
 
@@ -161,10 +157,6 @@ func (a *app) watchMenu() {
 		select {
 		case <-a.mConfigOutputs.ClickedCh:
 			a.openConfigWindow()
-		case <-a.mEnable.ClickedCh:
-			a.setEnabled(true)
-		case <-a.mDisable.ClickedCh:
-			a.setEnabled(false)
 		case <-a.mExit.ClickedCh:
 			systray.Quit()
 			return
@@ -213,6 +205,7 @@ func (a *app) onOutputsSaved(skip map[string]bool) {
 	if err := outputconfig.Save(skip); err != nil {
 		log.Printf("saving output config: %v", err)
 	}
+	a.syncDeviceMenu()
 }
 
 // watchDeviceSlot forwards clicks on one tray menu device entry to a
@@ -253,6 +246,10 @@ func (a *app) syncDeviceMenu() {
 		log.Printf("get current device: %v", err)
 	}
 
+	a.skipMu.Lock()
+	skip := a.skip
+	a.skipMu.Unlock()
+
 	a.deviceMu.Lock()
 	defer a.deviceMu.Unlock()
 
@@ -265,7 +262,11 @@ func (a *app) syncDeviceMenu() {
 		}
 
 		d := devices[i]
-		item.SetTitle(d.Name)
+		title := d.Name
+		if skip[d.Name] {
+			title += excludedSuffix
+		}
+		item.SetTitle(title)
 		item.SetTooltip("Switch to " + d.Name)
 		a.deviceSlots[i].id = d.ID
 		if d.ID == current.ID {
@@ -309,38 +310,6 @@ func (a *app) switchTo(id string) {
 	a.syncDeviceMenu()
 }
 
-func (a *app) setEnabled(enabled bool) {
-	if a.enabled == enabled {
-		return
-	}
-	a.enabled = enabled
-
-	systray.SetIcon(a.iconBytes())
-	systray.SetTooltip(a.tooltip())
-	a.updateMenuState()
-}
-
-func (a *app) updateMenuState() {
-	if a.enabled {
-		a.mEnable.Disable()
-		a.mDisable.Enable()
-	} else {
-		a.mEnable.Enable()
-		a.mDisable.Disable()
-	}
-}
-
-func (a *app) iconBytes() []byte {
-	if a.enabled {
-		return icons.IconEnabled
-	}
-	return icons.IconDisabled
-}
-
 func (a *app) tooltip() string {
-	state := "enabled"
-	if !a.enabled {
-		state = "disabled"
-	}
-	return fmt.Sprintf("Audio Output Switcher %s — hotkey %s is %s\nLeft-click: switch now. Right-click: pick a device.", version, hotkeyCombo, state)
+	return fmt.Sprintf("Audio Output Switcher %s — hotkey %s\nLeft-click: switch now. Right-click: pick a device.", version, hotkeyCombo)
 }
