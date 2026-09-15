@@ -4,12 +4,10 @@ A small, self-contained tray utility for Windows that lets you cycle through
 your audio playback devices with a single hotkey, and shows a notification
 telling you which one is now active.
 
-![tray icon](assets/icon_preview.png)
-
 ## What it does
 
 - **Cycles the default playback device.** Press the configured hotkey
-  (`Ctrl+Alt+F9` by default) and Windows' default audio output moves to the
+  (`Win+S` by default) and Windows' default audio output moves to the
   next active playback device in the list, wrapping back to the first one
   after the last. This updates the default for all three roles Windows
   tracks (console, multimedia, communications), so it takes effect for
@@ -48,7 +46,7 @@ Edit `%APPDATA%\AudioOutputSwitcher\config.json` and restart the app:
 
 ```json
 {
-  "hotkey": "ctrl+alt+f9",
+  "hotkey": "win+s",
   "enabled": true
 }
 ```
@@ -56,6 +54,13 @@ Edit `%APPDATA%\AudioOutputSwitcher\config.json` and restart the app:
 Combine any of `ctrl`, `alt`, `shift`, `win` with a letter, digit, function
 key (`f1`-`f20`), or one of `space`, `enter`, `escape`, `tab`, `delete`,
 `left`, `right`, `up`, `down` — for example `"ctrl+shift+space"`.
+
+> **Note:** Windows reserves several `Win+<letter>` combinations for the
+> shell itself (Search, Explorer, Run, lock screen, ...). On some Windows
+> versions the shell intercepts these before this app's hotkey ever fires,
+> so `Win+S` may keep opening Windows Search instead of switching devices.
+> If that happens, pick a combo that includes `ctrl`, `alt` or `shift`
+> instead, e.g. `"ctrl+alt+f9"`.
 
 ## Uninstalling
 

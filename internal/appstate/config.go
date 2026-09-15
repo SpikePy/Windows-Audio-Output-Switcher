@@ -11,7 +11,7 @@ import (
 
 // DefaultHotkey is used the first time the app runs, and whenever the
 // configured hotkey string can't be parsed.
-const DefaultHotkey = "ctrl+alt+f9"
+const DefaultHotkey = "win+s"
 
 // Config is the on-disk shape of the app's state file.
 type Config struct {
