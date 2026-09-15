@@ -1,8 +1,8 @@
 # Windows Audio Output Switcher
 
 A small, self-contained tray utility for Windows that lets you cycle through
-your audio playback devices with a single hotkey, and shows a notification
-telling you which one is now active.
+your audio playback devices with a single hotkey, and shows an on-screen
+overlay telling you which one is now active.
 
 ## What it does
 
@@ -15,69 +15,63 @@ telling you which one is now active.
   the same as changing it by hand in the Windows sound settings.
 - **`Win+S` actually works for this**, even though Windows normally
   reserves it for Search. See [how](#binding-win-shortcuts) below.
-- **Shows a toast notification on every switch**, naming the device that is
-  now active, so you get instant confirmation of what you just switched to.
-  Switching never waits on the notification to display - showing it spawns
-  a short-lived background process, and a still-running one is killed the
-  moment a newer switch comes in - so a burst of rapid switches ends up
-  showing only the latest device instead of a stack of stale toasts.
+- **Shows an on-screen overlay on every switch** — styled after Windows'
+  own volume/brightness OSD, not a toast notification — naming the device
+  (or its alias, see below) that is now active, so you get instant
+  confirmation of what you just switched to. A burst of rapid switches
+  only ever shows the latest one.
 - **Lives in the system tray**:
   - **Left-click** the tray icon to switch to the next output device.
+  - Hovering it shows the app version and the currently active device.
   - **Right-click** opens a menu listing every currently active output
     device — click one to switch to it directly (the active one is
-    checked) — followed by *Configure Outputs...* and *Exit*.
-- **Configure Outputs** opens a small window listing every output
-  (including ones that aren't plugged in right now) with a checkbox for
-  each. Unchecking one excludes it from `Win+S`/left-click cycling — it's
-  simply skipped over, and shown as "*(excluded)*" in the
-  right-click device list — but stays fully clickable there, so you can
-  still switch to it directly at any time. (Windows menu items can't be
-  greyed out without also disabling the click, so this label is the
-  closest equivalent that keeps it usable.) The choice is saved to
-  `%APPDATA%\AudioOutputSwitcher\outputs.yaml`; a device you've never
-  seen before is included by default, and one you've excluded keeps that
-  setting even while it's disconnected.
+    checked) — followed by *Configure* and *Exit*.
+- **Configure** opens `%APPDATA%\AudioOutputSwitcher\devices.yaml` in
+  whatever app Windows has associated with `.yaml` files, for you to
+  hand-edit. It's kept in sync with every device that's ever been seen —
+  a newly connected device is added automatically, and a disconnected one
+  keeps its row (never deleted automatically, only by editing it out
+  yourself) — with, per device:
+  - `alias` — the name shown for it in the right-click menu and the OSD;
+    defaults to the real device name.
+  - `skip` — set to `true` to leave it out of `Win+S`/left-click cycling.
+    It's still shown in the right-click menu (as "*(excluded)*") and stays
+    fully clickable there, so you can switch to it directly at any time.
+  - `last_seen` — when it was last detected as active, updated
+    automatically; useful for spotting stale entries worth deleting by
+    hand.
+
+  Edits are picked up automatically, no restart needed.
 
 It's a single ~8 MB `.exe` with no installation dependencies, no admin
 rights required, and nothing running except while you're logged in.
 
 ## Installing
 
-1. Grab `Install_AudioOutputSwitcher.exe` from the
+1. Grab `Setup_AudioOutputSwitcher.exe` from the
    [latest release](../../releases/latest) and run it.
-2. It downloads the newest `AudioOutputSwitcher.exe`, places it in your
-   Startup folder, and starts it immediately — no reboot needed.
-3. Running the installer again at any time re-checks for updates. It always
-   deploys under the same fixed filename, so there is only ever a single
-   Startup entry, and it makes sure the process that ends up running is the
-   one it just installed.
+2. Choose **1) Install or update**. It downloads the newest
+   `AudioOutputSwitcher.exe`, places it in your Startup folder, and starts
+   it immediately — no reboot needed.
+3. Running setup again at any time re-checks for updates. It always deploys
+   under the same fixed filename, so there is only ever a single Startup
+   entry, and it makes sure the process that ends up running is the one it
+   just installed.
 
 The switcher itself has no window; look for its icon in the system tray
 (you may need to expand the "hidden icons" arrow the first time).
 
 ## Troubleshooting
 
-The switcher has no console window, so if a switch or notification doesn't
-seem to work, check `%TEMP%\AudioOutputSwitcher.log` for details (hotkey
-registration failures, COM errors, failed notifications, etc. are all
-logged there).
-
-**Notifications land in Action Center but the banner never pops up.**
-Windows won't show the on-screen banner for a classic desktop app's toast
-notifications unless it can resolve a display name/icon for that app's
-identity, which requires an AppUserModelID registered via a Start Menu
-shortcut. The switcher creates one for itself automatically (as "Audio
-Output Switcher" in the Start Menu, [`internal/aumid`](internal/aumid)) -
-if banners still don't appear, check Windows Settings → System →
-Notifications, both for "Audio Output Switcher" and, as a fallback,
-"Windows PowerShell" (some Windows versions attribute unregistered
-toasts to the process that requested them).
+The switcher has no console window, so if a switch doesn't seem to work,
+check `%TEMP%\AudioOutputSwitcher.log` for details (hotkey registration
+failures, COM errors, etc. are all logged there).
 
 ## Uninstalling
 
-Grab `Uninstall_AudioOutputSwitcher.exe` from the same release and run it. It
-stops the running app, removes it from the Startup folder, and finally
-removes itself — nothing is left behind.
+Run `Setup_AudioOutputSwitcher.exe` again and choose **2) Uninstall**. It
+stops the running app, removes it from the Startup folder along with its
+saved device config, and finally removes itself — nothing is left behind.
 
 ## Building from source
 
@@ -85,15 +79,14 @@ Requires Go 1.24+. All commands target `windows/amd64`:
 
 ```sh
 GOOS=windows GOARCH=amd64 go build -o AudioOutputSwitcher.exe ./cmd/switcher
-GOOS=windows GOARCH=amd64 go build -o Install_AudioOutputSwitcher.exe ./cmd/installer
-GOOS=windows GOARCH=amd64 go build -o Uninstall_AudioOutputSwitcher.exe ./cmd/uninstaller
+GOOS=windows GOARCH=amd64 go build -o Setup_AudioOutputSwitcher.exe ./cmd/setup
 ```
 
 The official releases are built by
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which also
 embeds `assets/icons/icon.ico` as each `.exe`'s icon resource. Pushing a tag
-matching `v*.*.*` builds all three binaries and publishes them on a new
-GitHub release.
+matching `v*.*.*` builds both binaries and publishes them on a new GitHub
+release.
 
 ## How the switch actually happens
 
@@ -128,17 +121,16 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 
 ## Project layout
 
-| Path                | Purpose                                                          |
-| ------------------- | ----------------------------------------------------------------- |
-| `cmd/switcher`       | The tray application                                             |
-| `cmd/installer`      | Downloads the latest release into the Startup folder             |
-| `cmd/uninstaller`    | Removes everything the installer set up                          |
-| `internal/audio`        | Core Audio API + `IPolicyConfig` bindings                       |
-| `internal/llhotkey`     | Global hotkey via a low-level keyboard hook                     |
-| `internal/hotkeycfg`    | Parses hotkey combo strings like `"ctrl+alt+f9"`                |
-| `internal/notifier`     | Toast notifications                                              |
-| `internal/aumid`        | Registers the AppUserModelID toast banners need                 |
-| `internal/configwindow` | The native "Configure Outputs" window                           |
-| `internal/outputconfig` | Persists excluded outputs to `outputs.yaml`                     |
-| `internal/updater`      | GitHub release lookup/download shared by installer/uninstaller  |
-| `assets/icons`          | Embedded tray/exe icon                                           |
+| Path                     | Purpose                                                          |
+| ------------------------ | ----------------------------------------------------------------- |
+| `cmd/switcher`           | The tray application                                             |
+| `cmd/setup`              | Interactive install/update/uninstall menu                       |
+| `internal/audio`         | Core Audio API + `IPolicyConfig` bindings                        |
+| `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
+| `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
+| `internal/osd`           | The volume-OSD-style on-screen switch notification               |
+| `internal/aumid`         | Locates a legacy Start Menu shortcut for uninstall cleanup       |
+| `internal/outputconfig`  | Persists per-device alias/skip settings to `devices.yaml`        |
+| `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
+| `internal/updater`       | GitHub release lookup/download used by `internal/install`        |
+| `assets/icons`           | Embedded tray/exe icon                                           |
