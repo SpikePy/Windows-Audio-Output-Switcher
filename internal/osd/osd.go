@@ -1,20 +1,16 @@
 //go:build windows
 
 // Package osd shows a small on-screen overlay styled after Windows' own
-// volume/brightness OSD (a dark rounded pill with an icon and text, near
+// volume/brightness OSD (a dark rounded pill with centered text, near
 // the bottom of the screen, auto-dismissing after a couple of seconds) -
 // entirely in-process, with no dependency on the Windows toast/Action
 // Center notification system.
 package osd
 
 import (
-	"encoding/binary"
-	"fmt"
 	"sync"
 	"syscall"
 	"unsafe"
-
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
 )
 
 var (
@@ -25,7 +21,6 @@ var (
 	procCreateWindowExW            = user32.NewProc("CreateWindowExW")
 	procDefWindowProcW             = user32.NewProc("DefWindowProcW")
 	procDestroyWindow              = user32.NewProc("DestroyWindow")
-	procDestroyIcon                = user32.NewProc("DestroyIcon")
 	procPostQuitMessage            = user32.NewProc("PostQuitMessage")
 	procPostMessageW               = user32.NewProc("PostMessageW")
 	procGetMessageW                = user32.NewProc("GetMessageW")
@@ -39,11 +34,9 @@ var (
 	procBeginPaint                 = user32.NewProc("BeginPaint")
 	procEndPaint                   = user32.NewProc("EndPaint")
 	procFillRect                   = user32.NewProc("FillRect")
-	procDrawIconEx                 = user32.NewProc("DrawIconEx")
 	procDrawTextW                  = user32.NewProc("DrawTextW")
 	procSetTimer                   = user32.NewProc("SetTimer")
 	procKillTimer                  = user32.NewProc("KillTimer")
-	procCreateIconFromResourceEx   = user32.NewProc("CreateIconFromResourceEx")
 	procGetModuleHandleW           = syscall.NewLazyDLL("kernel32.dll").NewProc("GetModuleHandleW")
 
 	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
@@ -60,8 +53,7 @@ const (
 
 	windowWidth  = 340
 	windowHeight = 84
-	iconSize     = 48
-	iconMarginX  = 18
+	textMarginX  = 24
 	cornerRadius = 20
 	bottomMargin = 140 // clears the taskbar with room to spare
 	displayMs    = 1800
@@ -86,13 +78,12 @@ const (
 	wmClose   = 0x0010
 	wmDestroy = 0x0002
 
-	dtLeft        = 0x0000
+	dtCenter      = 0x0001
 	dtVcenter     = 0x0004
 	dtSingleLine  = 0x0020
 	dtEndEllipsis = 0x8000
 	dtNoPrefix    = 0x0800
 	transparentBk = 1
-	diNormal      = 0x0003
 )
 
 type point struct{ X, Y int32 }
@@ -157,15 +148,10 @@ func run(message string) {
 	classNamePtr, _ := syscall.UTF16PtrFromString(className)
 	msgPtr, _ := syscall.UTF16PtrFromString(message)
 
-	hIcon, err := loadIcon(icons.IconEnabled, iconSize)
-	if err != nil {
-		hIcon = 0 // draw without an icon rather than not showing anything
-	}
-
 	proc := func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		switch message {
 		case wmPaint:
-			paint(hwnd, hIcon, msgPtr)
+			paint(hwnd, msgPtr)
 			return 0
 		case wmTimer:
 			procKillTimer.Call(hwnd, timerID)
@@ -180,9 +166,6 @@ func run(message string) {
 				hwndCurrent = 0
 			}
 			mu.Unlock()
-			if hIcon != 0 {
-				procDestroyIcon.Call(hIcon)
-			}
 			procPostQuitMessage.Call(0)
 			return 0
 		}
@@ -241,7 +224,7 @@ func run(message string) {
 	}
 }
 
-func paint(hwnd uintptr, hIcon uintptr, msgPtr *uint16) {
+func paint(hwnd uintptr, msgPtr *uint16) {
 	var ps paintStruct
 	hdc, _, _ := procBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 	defer procEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
@@ -251,11 +234,6 @@ func paint(hwnd uintptr, hIcon uintptr, msgPtr *uint16) {
 
 	full := rect{0, 0, windowWidth, windowHeight}
 	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&full)), bg)
-
-	if hIcon != 0 {
-		iconY := (windowHeight - iconSize) / 2
-		procDrawIconEx.Call(hdc, iconMarginX, uintptr(iconY), hIcon, iconSize, iconSize, 0, 0, diNormal)
-	}
 
 	facePtr, _ := syscall.UTF16PtrFromString("Segoe UI")
 	font, _, _ := procCreateFontW.Call(
@@ -271,76 +249,16 @@ func paint(hwnd uintptr, hIcon uintptr, msgPtr *uint16) {
 	procSetTextColor.Call(hdc, rgb(255, 255, 255))
 	procSetBkMode.Call(hdc, transparentBk)
 
-	textRect := rect{Left: iconMarginX + iconSize + 16, Top: 0, Right: windowWidth - 16, Bottom: windowHeight}
+	textRect := rect{Left: textMarginX, Top: 0, Right: windowWidth - textMarginX, Bottom: windowHeight}
 	procDrawTextW.Call(
 		hdc,
 		uintptr(unsafe.Pointer(msgPtr)),
 		^uintptr(0), // -1: msgPtr is null-terminated, so DrawTextW should compute its length
 		uintptr(unsafe.Pointer(&textRect)),
-		uintptr(dtLeft|dtVcenter|dtSingleLine|dtEndEllipsis|dtNoPrefix),
+		uintptr(dtCenter|dtVcenter|dtSingleLine|dtEndEllipsis|dtNoPrefix),
 	)
 }
 
 func rgb(r, g, b byte) uintptr {
 	return uintptr(r) | uintptr(g)<<8 | uintptr(b)<<16
-}
-
-// loadIcon converts the image closest to size within a multi-resolution
-// .ico byte blob into an HICON.
-func loadIcon(icoData []byte, size int) (uintptr, error) {
-	imgData, err := extractIconImage(icoData, size)
-	if err != nil {
-		return 0, err
-	}
-	hIcon, _, _ := procCreateIconFromResourceEx.Call(
-		uintptr(unsafe.Pointer(&imgData[0])),
-		uintptr(len(imgData)),
-		1,          // fIcon = TRUE
-		0x00030000, // dwVer
-		uintptr(size), uintptr(size),
-		0,
-	)
-	if hIcon == 0 {
-		return 0, fmt.Errorf("CreateIconFromResourceEx failed")
-	}
-	return hIcon, nil
-}
-
-// extractIconImage returns the raw image bytes for the entry closest to
-// wantSize from a standard ICONDIR-format .ico file.
-func extractIconImage(icoData []byte, wantSize int) ([]byte, error) {
-	if len(icoData) < 6 {
-		return nil, fmt.Errorf("icon data too short")
-	}
-	count := int(binary.LittleEndian.Uint16(icoData[4:6]))
-
-	bestIdx, bestDiff := -1, 1<<30
-	for i := 0; i < count; i++ {
-		off := 6 + i*16
-		if off+16 > len(icoData) {
-			break
-		}
-		w := int(icoData[off])
-		if w == 0 {
-			w = 256
-		}
-		diff := w - wantSize
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff < bestDiff {
-			bestDiff, bestIdx = diff, i
-		}
-	}
-	if bestIdx == -1 {
-		return nil, fmt.Errorf("no icon entries found")
-	}
-
-	off := 6 + bestIdx*16
-	size := binary.LittleEndian.Uint32(icoData[off+8 : off+12])
-	offset := binary.LittleEndian.Uint32(icoData[off+12 : off+16])
-	if int(offset+size) > len(icoData) || size == 0 {
-		return nil, fmt.Errorf("icon entry out of range")
-	}
-	return icoData[offset : offset+size], nil
 }
