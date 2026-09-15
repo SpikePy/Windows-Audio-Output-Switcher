@@ -24,17 +24,18 @@ type Device struct {
 	Name string
 }
 
-// Entry is one device's row in the config file.
+// Entry is one device's row in the config file. Its field order is the
+// order the keys are written in.
 type Entry struct {
+	// ID is the Windows endpoint ID the entry belongs to.
+	ID string `yaml:"id"`
 	// Alias is the name shown for the device in the tray menu and OSD.
 	// Sync fills in the device's Windows name while it's blank.
 	Alias string `yaml:"alias"`
-	Skip  bool   `yaml:"skip"`
 	// LastSeen is when Sync last found the device active; the zero value
 	// means never. It's informational only - Sync never removes an entry.
 	LastSeen time.Time `yaml:"last_seen"`
-	// ID is the Windows endpoint ID the entry belongs to.
-	ID string `yaml:"id"`
+	Skip     bool      `yaml:"skip"`
 }
 
 // DisplayName returns the alias configured for the device with the given
@@ -80,16 +81,16 @@ const header = `# Audio Output Switcher - configuration
 #           rather than being removed automatically - delete it by hand
 #           if you want it gone for good.
 #
+#   id         - the Windows endpoint ID this row belongs to; don't edit.
 #   alias      - the name shown for this device in the tray menu and the
 #                on-screen notification; filled in with the device's
 #                Windows name if left blank.
+#   last_seen  - when this device was last detected as active; updated
+#                automatically, not meant to be hand-edited.
 #   skip       - set to true to leave this device out when cycling
 #                outputs (hotkey or left-click tray icon); it stays fully
 #                clickable in the tray menu for a direct, one-off switch
 #                either way.
-#   last_seen  - when this device was last detected as active; updated
-#                automatically, not meant to be hand-edited.
-#   id         - the Windows endpoint ID this row belongs to; don't edit.
 #
 # Edits are picked up automatically after saving - no need to restart
 # the app. If a save leaves this file invalid, the app keeps its previous

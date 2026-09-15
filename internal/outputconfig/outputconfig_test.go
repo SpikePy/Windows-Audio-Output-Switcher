@@ -183,6 +183,31 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 	}
 }
 
+func TestSyncWritesEntryKeysInOrder(t *testing.T) {
+	withTempAppData(t)
+	if _, err := Sync("", 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := strings.Index(string(data), "\noutputs:")
+	if start < 0 {
+		t.Fatalf("no outputs section in:\n%s", data)
+	}
+	outputs := string(data)[start:]
+	last := -1
+	for _, key := range []string{"id:", "alias:", "last_seen:", "skip:"} {
+		i := strings.Index(outputs, key)
+		if i <= last {
+			t.Fatalf("key %q missing or out of order in:\n%s", key, outputs)
+		}
+		last = i
+	}
+}
+
 func TestDisplayName(t *testing.T) {
 	entries := map[string]Entry{
 		"a": {ID: "a", Alias: "Desk"},

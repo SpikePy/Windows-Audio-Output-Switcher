@@ -47,16 +47,16 @@ overlay telling you which one is now active.
     device is added automatically, and a disconnected one keeps its row
     (never deleted automatically, only by editing it out yourself) —
     with, per device:
+    - `id` — the Windows device ID the row belongs to; don't edit it.
     - `alias` — the name shown for it in the right-click menu and the
       OSD; filled in with the device's Windows name if left blank.
+    - `last_seen` — when it was last detected as active, updated
+      automatically; useful for spotting stale entries worth deleting by
+      hand.
     - `skip` — set to `true` to leave it out of hotkey/left-click
       cycling. It's still shown in the right-click menu (as
       "*(excluded)*") and stays fully clickable there, so you can switch
       to it directly at any time.
-    - `last_seen` — when it was last detected as active, updated
-      automatically; useful for spotting stale entries worth deleting by
-      hand.
-    - `id` — the Windows device ID the row belongs to; don't edit it.
 
   Edits are picked up automatically, no restart needed. If a save leaves
   the file invalid (e.g. a YAML typo), the app keeps its previous settings,
