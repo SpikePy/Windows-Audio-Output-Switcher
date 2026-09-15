@@ -1,27 +1,12 @@
+//go:build windows
+
 package updater
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
-
-const userAgent = "AudioOutputSwitcher-Installer"
-
-var httpClient = &http.Client{Timeout: 30 * time.Second}
-
-// noRedirectClient stops at the first redirect, so LatestRelease can read
-// the tag straight off its Location header instead of fetching the
-// (large, HTML) release page.
-var noRedirectClient = &http.Client{
-	Timeout: 30 * time.Second,
-	CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}
 
 // Release identifies the newest published release of Owner/Repo.
 type Release struct {
@@ -33,25 +18,18 @@ type Release struct {
 // REST API: the API's unauthenticated rate limit (60 requests/hour) is
 // per source IP, so it's shared by every install/update behind the same
 // NAT/office network and gets exhausted easily, whereas this redirect
-// isn't subject to that limit.
+// isn't subject to that limit. The tag is read straight off the
+// redirect's Location header instead of fetching the release page.
 func LatestRelease() (*Release, error) {
 	url := fmt.Sprintf("https://github.com/%s/%s/releases/latest", Owner, Repo)
-	req, err := http.NewRequest(http.MethodHead, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-
-	resp, err := noRedirectClient.Do(req)
+	status, loc, err := redirectLocation(url)
 	if err != nil {
 		return nil, fmt.Errorf("contact GitHub: %w", err)
 	}
-	defer resp.Body.Close()
 
-	loc := resp.Header.Get("Location")
 	tag := tagFromReleaseURL(loc)
 	if tag == "" {
-		return nil, fmt.Errorf("could not resolve latest release tag (GitHub returned %s, Location %q)", resp.Status, loc)
+		return nil, fmt.Errorf("could not resolve latest release tag (GitHub returned status %d, Location %q)", status, loc)
 	}
 	return &Release{TagName: tag}, nil
 }
@@ -78,31 +56,15 @@ func AssetDownloadURL(tag, assetName string) string {
 // file first so a failed or interrupted download never leaves a
 // half-written file at destPath.
 func Download(url, destPath string) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", userAgent)
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download: unexpected status %s", resp.Status)
-	}
-
 	tmp := destPath + ".download"
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	if err := download(url, out); err != nil {
 		out.Close()
 		os.Remove(tmp)
-		return fmt.Errorf("save download: %w", err)
+		return fmt.Errorf("download: %w", err)
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)

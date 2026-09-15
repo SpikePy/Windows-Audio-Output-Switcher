@@ -1,6 +1,8 @@
-// Package updater implements the shared logic behind the installer and
-// uninstaller: locating the Startup folder entry, talking to the GitHub
-// releases API, and downloading assets.
+//go:build windows
+
+// Package updater implements what internal/install needs from the outside
+// world: locating the Startup folder entry, finding the latest GitHub
+// release, and downloading its assets.
 package updater
 
 import (

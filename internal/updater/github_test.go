@@ -1,3 +1,5 @@
+//go:build windows
+
 package updater
 
 import "testing"
@@ -20,5 +22,18 @@ func TestAssetDownloadURL(t *testing.T) {
 	want := "https://github.com/SpikePy/Windows-Audio-Output-Switcher/releases/download/v1.0.0/AudioOutputSwitcher.exe"
 	if got != want {
 		t.Errorf("AssetDownloadURL() = %q, want %q", got, want)
+	}
+}
+
+func TestSplitHTTPSURL(t *testing.T) {
+	host, path, err := splitHTTPSURL("https://github.com/SpikePy/Repo/releases/latest")
+	if err != nil || host != "github.com" || path != "/SpikePy/Repo/releases/latest" {
+		t.Errorf("splitHTTPSURL = %q, %q, %v", host, path, err)
+	}
+	if host, path, err := splitHTTPSURL("https://example.com"); err != nil || host != "example.com" || path != "/" {
+		t.Errorf("splitHTTPSURL(no path) = %q, %q, %v", host, path, err)
+	}
+	if _, _, err := splitHTTPSURL("http://example.com/x"); err == nil {
+		t.Error("splitHTTPSURL accepted a plain http URL")
 	}
 }

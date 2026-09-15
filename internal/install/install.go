@@ -1,3 +1,5 @@
+//go:build windows
+
 // Package install implements installing/updating and uninstalling Audio
 // Output Switcher, shared by cmd/setup. Kept separate from cmd/setup so
 // the logic itself - the part worth getting right - isn't entangled

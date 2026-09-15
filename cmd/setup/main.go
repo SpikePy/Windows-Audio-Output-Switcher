@@ -1,3 +1,5 @@
+//go:build windows
+
 // Command setup is the single entry point for installing, updating, and
 // uninstalling Audio Output Switcher - it replaces what used to be two
 // separate Install_/Uninstall_ executables with one that asks which of
