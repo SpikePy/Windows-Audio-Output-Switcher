@@ -28,6 +28,11 @@ const (
 	autoChoiceDelay = 5 * time.Second
 )
 
+// exitDelay is how long the final "done" screen waits for a keypress
+// before closing on its own, so a fully automated run (auto-chosen
+// install included) doesn't need any interaction at all to finish.
+const exitDelay = 3 * time.Second
+
 func main() {
 	fmt.Println("Audio Output Switcher setup", version)
 	fmt.Println()
@@ -53,7 +58,7 @@ func main() {
 		return
 	}
 
-	prompt("Press Enter to exit...")
+	waitOrTimeout(fmt.Sprintf("Press Enter to exit (closing automatically in %s)...", exitDelay), exitDelay)
 
 	if uninstalled {
 		// Uninstall doesn't remove this exe itself - do that here, same
@@ -65,22 +70,13 @@ func main() {
 	}
 }
 
-// prompt prints label, reads one line of input, and returns it with
-// surrounding whitespace trimmed. This is a console app launched by
-// double-clicking in Explorer as often as from a terminal, so every
-// path through main waits for a keypress before exiting - otherwise the
-// window would just flash and close before showing its result.
-func prompt(label string) string {
-	fmt.Print(label)
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	return strings.TrimSpace(line)
-}
-
-// promptWithDefault is like prompt, but returns def if nothing is
-// entered within timeout - e.g. setup double-clicked and then left
-// alone, rather than sitting there forever waiting for a keypress that
-// isn't coming.
-func promptWithDefault(label, def string, timeout time.Duration) string {
+// readLineWithTimeout prints label, then reads one line of input,
+// trimmed of surrounding whitespace. If nothing arrives within timeout
+// it gives up and reports ok = false instead of waiting forever - this
+// is a console app launched by double-clicking in Explorer as often as
+// from a terminal, and there's nobody at the keyboard to finish a
+// prompt in that case.
+func readLineWithTimeout(label string, timeout time.Duration) (line string, ok bool) {
 	fmt.Print(label)
 
 	lines := make(chan string, 1)
@@ -91,10 +87,30 @@ func promptWithDefault(label, def string, timeout time.Duration) string {
 
 	select {
 	case line := <-lines:
-		return line
+		return line, true
 	case <-time.After(timeout):
+		return "", false
+	}
+}
+
+// promptWithDefault reads one line via readLineWithTimeout, returning
+// def in its place on timeout - e.g. setup double-clicked and left
+// alone defaults to installing/updating rather than sitting there.
+func promptWithDefault(label, def string, timeout time.Duration) string {
+	line, ok := readLineWithTimeout(label, timeout)
+	if !ok {
 		fmt.Println(def)
 		return def
+	}
+	return line
+}
+
+// waitOrTimeout prints label and blocks until either a keypress or
+// timeout, whichever comes first - used for the final "done" pause so
+// a fully unattended run still closes on its own.
+func waitOrTimeout(label string, timeout time.Duration) {
+	if _, ok := readLineWithTimeout(label, timeout); !ok {
+		fmt.Println()
 	}
 }
 
