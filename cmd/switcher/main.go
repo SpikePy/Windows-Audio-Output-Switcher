@@ -1,3 +1,5 @@
+//go:build windows
+
 // Command switcher runs in the system tray and cycles the default Windows
 // playback device on a global hotkey press.
 package main
@@ -6,20 +8,25 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"fyne.io/systray"
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/configwindow"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/osd"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 )
+
+// createNoWindow (CREATE_NO_WINDOW) stops a spawned helper process from
+// flashing a console window, since this app has none of its own.
+const createNoWindow = 0x08000000
 
 // version is set via -ldflags "-X main.version=..." during the release
 // build; it stays "dev" for local builds.
@@ -63,6 +70,12 @@ type app struct {
 	skip   map[string]bool
 	skipMu sync.Mutex
 
+	// configModTime is the output config file's mtime as of the last
+	// time it was read (by us writing it, or by picking up an edit made
+	// in the user's editor) - see reloadConfigIfChanged.
+	configModTime time.Time
+	configMu      sync.Mutex
+
 	mConfigOutputs *systray.MenuItem
 	mExit          *systray.MenuItem
 }
@@ -83,7 +96,7 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	a := &app{skip: outputconfig.Load()}
+	a := &app{skip: outputconfig.Load(), configModTime: outputconfig.ModTime()}
 	systray.Run(a.onReady, a.onExit)
 }
 
@@ -99,7 +112,7 @@ func (a *app) onReady() {
 	}
 	systray.AddSeparator()
 
-	a.mConfigOutputs = systray.AddMenuItem("Configure Outputs...", "Choose which outputs to include when switching")
+	a.mConfigOutputs = systray.AddMenuItem("Configure Outputs...", "Open the output config file to choose which outputs to include when switching")
 	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
 
@@ -155,7 +168,7 @@ func (a *app) watchMenu() {
 	for {
 		select {
 		case <-a.mConfigOutputs.ClickedCh:
-			a.openConfigWindow()
+			a.openConfigFile()
 		case <-a.mExit.ClickedCh:
 			systray.Quit()
 			return
@@ -163,48 +176,76 @@ func (a *app) watchMenu() {
 	}
 }
 
-// openConfigWindow gathers every device name worth showing - currently
-// active ones, plus any previously excluded name even if that device
-// isn't connected right now - and opens the Configure Outputs window.
-func (a *app) openConfigWindow() {
+// openConfigFile (re)writes the output config file so it lists every
+// currently known device - active ones, plus any previously excluded
+// name even if that device isn't connected right now - then opens it in
+// whatever application Windows has associated with .yaml files, for the
+// user to hand-edit.
+func (a *app) openConfigFile() {
 	devices, err := a.worker.List()
 	if err != nil {
-		log.Printf("list devices for config window: %v", err)
+		log.Printf("list devices for config file: %v", err)
+	}
+	names := make([]string, len(devices))
+	for i, d := range devices {
+		names[i] = d.Name
 	}
 
 	a.skipMu.Lock()
 	skip := a.skip
 	a.skipMu.Unlock()
 
-	seen := make(map[string]bool, len(devices)+len(skip))
-	names := make([]string, 0, len(devices)+len(skip))
-	for _, d := range devices {
-		if !seen[d.Name] {
-			seen[d.Name] = true
-			names = append(names, d.Name)
-		}
+	merged, err := outputconfig.Sync(names, skip)
+	if err != nil {
+		log.Printf("sync output config: %v", err)
+		return
 	}
-	for name := range skip {
-		if !seen[name] {
-			seen[name] = true
-			names = append(names, name)
-		}
-	}
+	a.skipMu.Lock()
+	a.skip = merged
+	a.skipMu.Unlock()
+	a.configMu.Lock()
+	a.configModTime = outputconfig.ModTime()
+	a.configMu.Unlock()
+	a.syncDeviceMenu()
 
-	configwindow.Open(names, skip, a.onOutputsSaved)
+	if err := openInDefaultApp(outputconfig.Path()); err != nil {
+		log.Printf("open output config file: %v", err)
+		osd.Show("Could not open the config file")
+	}
 }
 
-// onOutputsSaved is called from the config window's own thread once the
-// user clicks Save.
-func (a *app) onOutputsSaved(skip map[string]bool) {
-	a.skipMu.Lock()
-	a.skip = skip
-	a.skipMu.Unlock()
+// openInDefaultApp opens path with whatever application Windows has
+// associated with its extension - the same as double-clicking it in
+// Explorer - without blocking the caller.
+func openInDefaultApp(path string) error {
+	// The empty "" argument is `start`'s window-title placeholder -
+	// without it, `start` treats a quoted path containing spaces as the
+	// title instead of the target to open.
+	cmd := exec.Command("cmd", "/C", "start", "", path)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return cmd.Start()
+}
 
-	if err := outputconfig.Save(skip); err != nil {
-		log.Printf("saving output config: %v", err)
+// reloadConfigIfChanged picks up an edit made outside the app (i.e. in
+// whatever editor openConfigFile opened) by comparing the config file's
+// mtime against the last time it was read.
+func (a *app) reloadConfigIfChanged() {
+	mt := outputconfig.ModTime()
+
+	a.configMu.Lock()
+	changed := !mt.IsZero() && !mt.Equal(a.configModTime)
+	if changed {
+		a.configModTime = mt
 	}
-	a.syncDeviceMenu()
+	a.configMu.Unlock()
+
+	if !changed {
+		return
+	}
+
+	a.skipMu.Lock()
+	a.skip = outputconfig.Load()
+	a.skipMu.Unlock()
 }
 
 // watchDeviceSlot forwards clicks on one tray menu device entry to a
@@ -222,12 +263,14 @@ func (a *app) watchDeviceSlot(i int) {
 }
 
 // watchDeviceChanges periodically refreshes the device menu so plugging
-// or unplugging a device (or switching it elsewhere) is reflected without
-// requiring a restart.
+// or unplugging a device (or switching it elsewhere) is reflected
+// without requiring a restart, and picks up edits made to the output
+// config file in the meantime.
 func (a *app) watchDeviceChanges() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
+		a.reloadConfigIfChanged()
 		a.syncDeviceMenu()
 	}
 }
