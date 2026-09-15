@@ -44,11 +44,11 @@ func main() {
 	label := fmt.Sprintf("Choose an option (1 or 2) - installing/updating automatically in %s if you don't: ", autoChoiceDelay)
 	switch promptWithDefault(label, autoChoice, autoChoiceDelay) {
 	case "1":
-		if err := install.Install(version); err != nil {
+		if err := install.Install(); err != nil {
 			fmt.Fprintln(os.Stderr, "install failed:", err)
 		}
 	case "2":
-		if err := install.Uninstall(version); err != nil {
+		if err := install.Uninstall(); err != nil {
 			fmt.Fprintln(os.Stderr, "uninstall failed:", err)
 		} else {
 			uninstalled = true

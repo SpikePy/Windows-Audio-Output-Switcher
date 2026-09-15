@@ -19,10 +19,8 @@ import (
 // name, and (re)starts it. Calling it again later updates in place: the
 // fixed filename guarantees there is always exactly one autostart entry,
 // and the version check guarantees the newest release is the one
-// running. version is this setup tool's own version, only used in
-// progress messages.
-func Install(version string) error {
-	fmt.Println("Audio Output Switcher setup", version)
+// running.
+func Install() error {
 	fmt.Println("Checking for the latest release...")
 
 	release, err := updater.LatestRelease()
@@ -87,9 +85,7 @@ func Install(version string) error {
 // one - leaving no trace behind. It does not touch the setup tool
 // itself; the caller is responsible for that (see cmd/setup, which
 // self-deletes after a successful uninstall).
-func Uninstall(version string) error {
-	fmt.Println("Audio Output Switcher setup", version)
-
+func Uninstall() error {
 	fmt.Println("Stopping Audio Output Switcher...")
 	updater.KillRunning()
 	time.Sleep(500 * time.Millisecond)
