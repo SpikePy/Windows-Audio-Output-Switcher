@@ -37,30 +37,23 @@ def add_outline(img, radius_px):
 # Each fader's knob sits at a different height along its rail - purely
 # for visual variety (a mixing console reads as "audio" partly because
 # its faders are never all level), not any actual meaning.
-FADER_LEVELS = (0.66, 0.30, 0.55, 0.40)
+FADER_LEVELS = (0.62, 0.28, 0.48)
 
 
 def draw_mixer(draw, cx, cy, scale):
-    # A rounded-square frame around a row of vertical fader rails, each
-    # with a round knob crossing it - the classic mixing-console glyph.
-    # Bold strokes and knobs (not hairlines) so it stays readable shrunk
-    # to a 16px tray icon.
+    # Three vertical fader rails, each with a round knob crossing it -
+    # the mixing-console glyph, pared down to just that (an earlier
+    # version also drew a frame around it and used 4 thinner rails; both
+    # turned out to blur into a fuzzy mass at real 16px tray size,
+    # leaving only the knobs as distinguishable dots). Fewer, fatter,
+    # more widely spaced shapes read as a distinct icon at a glance
+    # instead of a smudge indistinguishable from any other app's.
     m = scale
 
-    frame_half = 216 * m
-    frame_radius = 70 * m
-    frame_width = 26 * m
-    draw.rounded_rectangle(
-        [cx - frame_half, cy - frame_half, cx + frame_half, cy + frame_half],
-        radius=frame_radius,
-        outline=RAIL,
-        width=round(frame_width),
-    )
-
-    rail_w = 16 * m
-    rail_half_len = 140 * m
-    knob_r = 34 * m
-    spacing = 108 * m
+    rail_w = 30 * m
+    rail_half_len = 200 * m
+    knob_r = 62 * m
+    spacing = 168 * m
 
     top = cy - rail_half_len
     bottom = cy + rail_half_len
