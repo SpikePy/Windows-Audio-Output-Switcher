@@ -2,36 +2,48 @@
 # Generates icon.ico (colored, "enabled" state + exe icon) and
 # icon_disabled.ico (muted, "disabled" tray state) from scratch with Pillow.
 # Run: python3 assets/gen_icon.py
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 import math
 
 SIZE = 512
 SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 
-# Flat design: solid colors only, no gradients or drop shadows.
-BG_COLOR = (88, 101, 242)      # flat indigo
+# Flat design: solid colors only, no gradients or drop shadows. There's no
+# background plate - the glyph sits on a transparent canvas so the tray's
+# own background shows through - so the whole silhouette gets a dark
+# outline (see add_outline below) to stay legible whether the tray behind
+# it is light or dark. The composition itself is also kept to two bold
+# shapes (a speaker plus a small corner badge) rather than thin linework:
+# a full ring-and-arrowheads motif reads fine at 512px but collapses into
+# a smudge once Windows draws it at 16px in the tray.
 SPEAKER = (255, 255, 255)
-SWITCH_COLOR = (46, 230, 168)  # flat mint accent for the "switch" motif
+SWITCH_COLOR = (46, 230, 168)  # flat mint accent for the "switch" badge
+OUTLINE_COLOR = (18, 18, 26)
 
 
-def rounded_mask(size, radius):
-    mask = Image.new("L", (size, size), 0)
-    d = ImageDraw.Draw(mask)
-    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
-    return mask
+def add_outline(img, radius_px):
+    """Returns img composited over a dark silhouette outline traced
+    radius_px beyond its own alpha - a "sticker" edge that keeps the
+    glyph readable on any background color, since a transparent icon
+    can't rely on a background plate for contrast."""
+    alpha = img.split()[3]
+    dilated = alpha.filter(ImageFilter.GaussianBlur(radius_px)).point(
+        lambda a: 255 if a > 12 else 0
+    )
+    outline = Image.new("RGBA", img.size, OUTLINE_COLOR + (255,))
+    outline.putalpha(dilated)
+    return Image.alpha_composite(outline, img)
 
 
-def flat_background(size):
-    return Image.new("RGB", (size, size), BG_COLOR)
-
-
-def draw_speaker(draw, cx, cy, scale, size_mult=1.0):
-    # Classic "speaker" glyph: a small body plus an expanding horn, in one polygon.
-    m = scale * size_mult
-    body_w = 70 * m
-    body_h = 130 * m
-    horn_w = 90 * m
-    horn_h = 230 * m
+def draw_speaker(draw, cx, cy, scale):
+    # Classic "speaker" glyph: a small body plus an expanding horn, in one
+    # polygon. This is the dominant shape - bold and solid so it stays
+    # readable even shrunk to a 16px tray icon.
+    m = scale
+    body_w = 92 * m
+    body_h = 168 * m
+    horn_w = 118 * m
+    horn_h = 296 * m
     x0 = cx - (body_w + horn_w) / 2
     points = [
         (x0, cy - body_h / 2),
@@ -44,25 +56,26 @@ def draw_speaker(draw, cx, cy, scale, size_mult=1.0):
     draw.polygon(points, fill=SPEAKER)
 
 
-def draw_switch_arrows(draw, cx, cy, radius, width, color):
-    bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
-    # Two opposing arcs forming a circular "swap/cycle" motif - a single
-    # flat stroke each, no shadow/bevel layer underneath.
-    draw.arc(bbox, start=-160, end=40, fill=color, width=width)
-    draw.arc(bbox, start=20, end=220, fill=color, width=width)
+def draw_switch_badge(draw, cx, cy, r):
+    # A small solid disc badge (not a thin ring around the whole icon) so
+    # it stays a single clean blob of color at tiny sizes, with a pair of
+    # small cycle arrows inside it that only need to read at larger
+    # sizes - a common "base glyph + corner badge" pattern.
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=SWITCH_COLOR)
 
-    def arrowhead(angle_deg, color):
-        # A chevron sitting ON the ring, pointing tangentially (i.e.
-        # along the circle's curve, in the arc's sweep direction) rather
-        # than radially outward - the classic "refresh/cycle" look.
+    ring_r = r * 0.56
+    width = max(1, round(r * 0.28))
+    bbox = [cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r]
+    draw.arc(bbox, start=-160, end=40, fill=SPEAKER, width=width)
+    draw.arc(bbox, start=20, end=220, fill=SPEAKER, width=width)
+
+    def arrowhead(angle_deg):
         a = math.radians(angle_deg)
         radial = (math.cos(a), math.sin(a))
-        tangent = (-math.sin(a), math.cos(a))  # direction of increasing angle
-
-        center = (cx + radius * radial[0], cy + radius * radial[1])
-        head_len = width * 2.6
-        head_w = width * 1.5
-
+        tangent = (-math.sin(a), math.cos(a))
+        center = (cx + ring_r * radial[0], cy + ring_r * radial[1])
+        head_len = width * 2.4
+        head_w = width * 1.4
         tip = (
             center[0] + tangent[0] * head_len * 0.55,
             center[1] + tangent[1] * head_len * 0.55,
@@ -73,38 +86,32 @@ def draw_switch_arrows(draw, cx, cy, radius, width, color):
         )
         p1 = (base[0] + radial[0] * head_w, base[1] + radial[1] * head_w)
         p2 = (base[0] - radial[0] * head_w, base[1] - radial[1] * head_w)
-        draw.polygon([tip, p1, p2], fill=color)
+        draw.polygon([tip, p1, p2], fill=SPEAKER)
 
-    arrowhead(40, color)
-    arrowhead(220, color)
+    arrowhead(40)
+    arrowhead(220)
 
 
 def build(size, muted):
-    bg = flat_background(size)
-    mask = rounded_mask(size, radius=int(size * 0.22))
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    img.paste(bg, (0, 0), mask)
-
     draw = ImageDraw.Draw(img)
     scale = size / SIZE
     cx, cy = size / 2, size / 2
 
-    # A speaker sitting inside a circular loop of arrows: the loop reads as
-    # "switch/cycle", the speaker as "audio output".
-    draw_switch_arrows(
+    draw_speaker(draw, cx=cx - size * 0.03, cy=cy, scale=scale * 1.0)
+    draw_switch_badge(
         draw,
-        cx=cx,
-        cy=cy,
-        radius=size * 0.30,
-        width=max(2, round(size * 0.048)),
-        color=SWITCH_COLOR,
+        cx=cx + size * 0.30,
+        cy=cy + size * 0.30,
+        r=size * 0.24,
     )
-    draw_speaker(draw, cx=cx, cy=cy, scale=scale, size_mult=0.78)
+
+    img = add_outline(img, radius_px=size * 0.02)
 
     if muted:
         gray = img.convert("LA").convert("RGBA")
         img = Image.blend(img, gray, 0.85)
-        alpha = img.split()[3].point(lambda a: int(a * 0.55))
+        alpha = img.split()[3].point(lambda a: int(a * 0.7))
         img.putalpha(alpha)
 
     return img
