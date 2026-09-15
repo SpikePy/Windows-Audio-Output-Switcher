@@ -6,8 +6,10 @@ package notifier
 import (
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode/utf16"
 
@@ -58,9 +60,23 @@ $toast.Group = '%s'
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('%s').Show($toast)
 `
 
-// Show displays a toast notification with the given title and message,
-// replacing any notification this app is currently showing.
-func Show(title, message string) error {
+// pending tracks the most recently spawned, still-running notification
+// process (if any), so a new Show() can kill it before it has a chance
+// to display stale content.
+var (
+	mu      sync.Mutex
+	pending *exec.Cmd
+)
+
+// Show displays a toast notification with the given title and message.
+// Spawning powershell.exe to talk to the WinRT toast API is slow enough
+// (up to a couple of seconds) that this must never block the caller -
+// switching the audio device must not wait on it - so it runs
+// asynchronously and logs any failure instead of returning it. If a
+// previous call is still in flight when a new one comes in, it's killed
+// first so a burst of rapid switches can't show stale, out-of-order
+// content.
+func Show(title, message string) {
 	script := fmt.Sprintf(scriptTemplate, escapeCDATA(title), escapeCDATA(message), tag, group, appID)
 
 	// -EncodedCommand takes the script as Base64-encoded UTF-16LE
@@ -72,10 +88,26 @@ func Show(title, message string) error {
 		"-EncodedCommand", encodeCommand(script))
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("show toast: %w: %s", err, out)
+	mu.Lock()
+	if pending != nil && pending.Process != nil {
+		_ = pending.Process.Kill()
 	}
-	return nil
+	pending = cmd
+	mu.Unlock()
+
+	go func() {
+		out, err := cmd.CombinedOutput()
+
+		mu.Lock()
+		if pending == cmd {
+			pending = nil
+		}
+		mu.Unlock()
+
+		if err != nil {
+			log.Printf("show toast: %v: %s", err, out)
+		}
+	}()
 }
 
 func encodeCommand(script string) string {

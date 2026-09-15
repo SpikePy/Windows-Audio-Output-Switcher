@@ -144,7 +144,7 @@ func (a *app) registerHotkey() {
 	hk := llhotkey.New(mods.Ctrl, mods.Alt, mods.Shift, mods.Win, key)
 	if err := llhotkey.Register(hk); err != nil {
 		log.Printf("failed to register hotkey %q: %v", hotkeyCombo, err)
-		_ = notifier.Show("Audio Output Switcher",
+		notifier.Show("Audio Output Switcher",
 			fmt.Sprintf("Could not register the switch hotkey (%s): %v", hotkeyCombo, err))
 		return
 	}
@@ -294,11 +294,11 @@ func (a *app) switchOutput() {
 	switch {
 	case result.Err != nil:
 		log.Printf("switch output: %v", result.Err)
-		_ = notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
+		notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
 	case !result.Switched:
-		_ = notifier.Show("Audio Output Switcher", "Only one output available: "+result.Device.Name)
+		notifier.Show("Audio Output Switcher", "Only one output available: "+result.Device.Name)
 	default:
-		_ = notifier.Show("Audio output switched", result.Device.Name)
+		notifier.Show("Audio output switched", result.Device.Name)
 	}
 	a.syncDeviceMenu()
 }
@@ -310,9 +310,9 @@ func (a *app) switchTo(id string) {
 	switch {
 	case result.Err != nil:
 		log.Printf("switch output: %v", result.Err)
-		_ = notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
+		notifier.Show("Audio Output Switcher", "Could not switch output: "+result.Err.Error())
 	case result.Switched:
-		_ = notifier.Show("Audio output switched", result.Device.Name)
+		notifier.Show("Audio output switched", result.Device.Name)
 	}
 	a.syncDeviceMenu()
 }

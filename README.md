@@ -17,8 +17,10 @@ telling you which one is now active.
   reserves it for Search. See [how](#binding-win-shortcuts) below.
 - **Shows a toast notification on every switch**, naming the device that is
   now active, so you get instant confirmation of what you just switched to.
-  Pressing the hotkey again quickly replaces the previous toast instead of
-  piling up a stack of them.
+  Switching never waits on the notification to display - showing it spawns
+  a short-lived background process, and a still-running one is killed the
+  moment a newer switch comes in - so a burst of rapid switches ends up
+  showing only the latest device instead of a stack of stale toasts.
 - **Lives in the system tray**:
   - **Left-click** the tray icon to switch to the next output device.
   - **Right-click** opens a menu listing every currently active output
