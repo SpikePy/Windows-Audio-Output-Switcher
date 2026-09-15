@@ -5,6 +5,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -52,7 +54,22 @@ type app struct {
 	mExit    *systray.MenuItem
 }
 
+// logFilePath is where diagnostic output goes. This app has no console
+// (it builds with -H=windowsgui), so log.Print output would otherwise
+// vanish silently - writing to a file makes failures (e.g. a hotkey that
+// failed to register, or a notification that failed to show) inspectable
+// after the fact.
+func logFilePath() string {
+	return filepath.Join(os.TempDir(), "AudioOutputSwitcher.log")
+}
+
 func main() {
+	if f, err := os.OpenFile(logFilePath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		log.SetOutput(f)
+		defer f.Close()
+	}
+	log.Printf("Audio Output Switcher %s starting", version)
+
 	a := &app{enabled: true}
 	systray.Run(a.onReady, a.onExit)
 }

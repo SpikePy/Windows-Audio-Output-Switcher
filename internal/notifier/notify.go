@@ -4,10 +4,12 @@
 package notifier
 
 import (
+	"encoding/base64"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+	"unicode/utf16"
 )
 
 const (
@@ -18,6 +20,10 @@ const (
 	// only ever shows the latest device.
 	tag   = "audio-output-switcher"
 	group = "audio-output-switcher"
+
+	// createNoWindow (CREATE_NO_WINDOW) stops the spawned powershell.exe
+	// from flashing a console window, since this app has none of its own.
+	createNoWindow = 0x08000000
 )
 
 const scriptTemplate = `
@@ -50,25 +56,29 @@ $toast.Group = '%s'
 func Show(title, message string) error {
 	script := fmt.Sprintf(scriptTemplate, escapeCDATA(title), escapeCDATA(message), tag, group, appID)
 
-	tmp, err := os.CreateTemp("", "audio-output-switcher-*.ps1")
-	if err != nil {
-		return fmt.Errorf("create notification script: %w", err)
-	}
-	defer os.Remove(tmp.Name())
+	// -EncodedCommand takes the script as Base64-encoded UTF-16LE
+	// directly on the command line, so there's no temp .ps1 file to
+	// create, clean up, or have execution policy / antivirus scanning
+	// delay it.
+	cmd := exec.Command("powershell.exe",
+		"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+		"-EncodedCommand", encodeCommand(script))
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 
-	if _, err := tmp.WriteString(script); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write notification script: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmp.Name())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("show toast: %w: %s", err, out)
 	}
 	return nil
+}
+
+func encodeCommand(script string) string {
+	u16 := utf16.Encode([]rune(script))
+	buf := make([]byte, len(u16)*2)
+	for i, u := range u16 {
+		buf[2*i] = byte(u)
+		buf[2*i+1] = byte(u >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(buf)
 }
 
 // escapeCDATA guards against a literal "]]>" ending the CDATA section

@@ -47,6 +47,13 @@ rights required, and nothing running except while you're logged in.
 The switcher itself has no window; look for its icon in the system tray
 (you may need to expand the "hidden icons" arrow the first time).
 
+## Troubleshooting
+
+The switcher has no console window, so if a switch or notification doesn't
+seem to work, check `%TEMP%\AudioOutputSwitcher.log` for details (hotkey
+registration failures, COM errors, failed notifications, etc. are all
+logged there).
+
 ## Uninstalling
 
 Grab `AudioOutputSwitcherUninstall.exe` from the same release and run it. It
