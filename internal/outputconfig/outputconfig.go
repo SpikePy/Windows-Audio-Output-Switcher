@@ -44,18 +44,6 @@ type file struct {
 	Outputs []Entry `yaml:"outputs"`
 }
 
-// legacyFile is the outputs.yaml format used before the config file
-// gained the alias field and was renamed to devices.yaml (Outputs, with
-// no "alias" key - Entry.Alias just comes back empty, which is the
-// correct "use the real name" default anyway), plus the even older
-// exclude-list-only format (Skip) from before that. Load still
-// understands both so upgrading doesn't silently drop anyone's saved
-// settings.
-type legacyFile struct {
-	Outputs []Entry  `yaml:"outputs"`
-	Skip    []string `yaml:"skip"`
-}
-
 const header = `# Audio Output Switcher - device configuration
 #
 # One entry per playback device.
@@ -76,53 +64,29 @@ const header = `# Audio Output Switcher - device configuration
 // per-device settings in general, not just which outputs to skip.
 const fileName = "devices.yaml"
 
-// legacyFileName is the previous name of this file, still read as a
-// migration fallback - see Load.
-const legacyFileName = "outputs.yaml"
-
 // Path returns where the config file lives:
 // %APPDATA%\AudioOutputSwitcher\devices.yaml.
 func Path() string {
 	return filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher", fileName)
 }
 
-func legacyPath() string {
-	return filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher", legacyFileName)
-}
-
 // Load returns the last-saved settings, keyed by device name. A missing
-// or unreadable file just means nothing has been customized yet; if
-// devices.yaml doesn't exist yet, this falls back to reading the older
-// outputs.yaml (in either format it was ever written in) so upgrading
-// doesn't lose anyone's saved exclusions or drop them the first time
-// devices.yaml is written.
+// or unreadable file just means nothing has been customized yet - Sync
+// creates it the first time the user opens the config from the tray
+// menu.
 func Load() map[string]Entry {
-	if data, err := os.ReadFile(Path()); err == nil {
-		var f file
-		if err := yaml.Unmarshal(data, &f); err == nil && len(f.Outputs) > 0 {
-			entries := make(map[string]Entry, len(f.Outputs))
-			for _, e := range f.Outputs {
-				entries[e.Name] = e
-			}
-			return entries
-		}
-	}
-
-	data, err := os.ReadFile(legacyPath())
+	data, err := os.ReadFile(Path())
 	if err != nil {
 		return map[string]Entry{}
 	}
 
-	var legacy legacyFile
-	if err := yaml.Unmarshal(data, &legacy); err != nil {
+	var f file
+	if err := yaml.Unmarshal(data, &f); err != nil {
 		return map[string]Entry{}
 	}
-	entries := make(map[string]Entry, len(legacy.Outputs)+len(legacy.Skip))
-	for _, e := range legacy.Outputs {
-		entries[e.Name] = Entry{Name: e.Name, Skip: e.Skip}
-	}
-	for _, name := range legacy.Skip {
-		entries[name] = Entry{Name: name, Skip: true}
+	entries := make(map[string]Entry, len(f.Outputs))
+	for _, e := range f.Outputs {
+		entries[e.Name] = e
 	}
 	return entries
 }
