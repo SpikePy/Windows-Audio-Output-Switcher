@@ -12,22 +12,24 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
-	user32 = syscall.NewLazyDLL("user32.dll")
-	gdi32  = syscall.NewLazyDLL("gdi32.dll")
+	user32 = windows.NewLazySystemDLL("user32.dll")
+	gdi32  = windows.NewLazySystemDLL("gdi32.dll")
 
 	procRegisterClassExW           = user32.NewProc("RegisterClassExW")
 	procCreateWindowExW            = user32.NewProc("CreateWindowExW")
 	procDefWindowProcW             = user32.NewProc("DefWindowProcW")
-	procDestroyWindow              = user32.NewProc("DestroyWindow")
-	procPostQuitMessage            = user32.NewProc("PostQuitMessage")
 	procPostMessageW               = user32.NewProc("PostMessageW")
 	procGetMessageW                = user32.NewProc("GetMessageW")
 	procTranslateMessage           = user32.NewProc("TranslateMessage")
 	procDispatchMessageW           = user32.NewProc("DispatchMessageW")
 	procShowWindow                 = user32.NewProc("ShowWindow")
+	procSetWindowPos               = user32.NewProc("SetWindowPos")
+	procInvalidateRect             = user32.NewProc("InvalidateRect")
 	procUpdateWindow               = user32.NewProc("UpdateWindow")
 	procSetWindowRgn               = user32.NewProc("SetWindowRgn")
 	procSetLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
@@ -38,10 +40,8 @@ var (
 	procDrawTextW                  = user32.NewProc("DrawTextW")
 	procSetTimer                   = user32.NewProc("SetTimer")
 	procKillTimer                  = user32.NewProc("KillTimer")
-	procGetModuleHandleW           = syscall.NewLazyDLL("kernel32.dll").NewProc("GetModuleHandleW")
 
 	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
-	procDeleteObject       = gdi32.NewProc("DeleteObject")
 	procCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
 	procCreateFontW        = gdi32.NewProc("CreateFontW")
 	procSelectObject       = gdi32.NewProc("SelectObject")
@@ -72,19 +72,24 @@ const (
 	smCxscreen = 0
 	smCyscreen = 1
 
-	swShowNoActivate = 4
+	swHide = 0
+
+	swpNoSize     = 0x0001
+	swpNoActivate = 0x0010
+	swpShowWindow = 0x0040
+	hwndTopmost   = ^uintptr(0) // (HWND)-1
 
 	wmPaint   = 0x000F
 	wmTimer   = 0x0113
-	wmClose   = 0x0010
-	wmDestroy = 0x0002
+	wmShowOSD = 0x8000 + 1 // WM_APP+1, posted by Show
 
-	dtCenter      = 0x0001
-	dtVcenter     = 0x0004
-	dtSingleLine  = 0x0020
-	dtEndEllipsis = 0x8000
-	dtNoPrefix    = 0x0800
-	transparentBk = 1
+	dtCenter       = 0x0001
+	dtVcenter      = 0x0004
+	dtSingleLine   = 0x0020
+	dtEndEllipsis  = 0x8000
+	dtNoPrefix     = 0x0800
+	transparentBk  = 1
+	defaultCharset = 1
 )
 
 type point struct{ X, Y int32 }
@@ -125,149 +130,52 @@ type paintStruct struct {
 }
 
 var (
-	mu          sync.Mutex
-	hwndCurrent uintptr
-	// generation increments on every Show call; each run goroutine
-	// checks it against the value it was launched with right after
-	// creating its window (see run) so that if a newer Show call has
-	// since come in - which can happen before hwndCurrent even exists
-	// yet to close, on a burst of rapid switches - the newer one always
-	// wins the race to be displayed, never an older one that happened
-	// to finish CreateWindowExW later.
-	generation uint64
-	// texts holds the message to paint for each currently-live overlay
-	// window, keyed by hwnd. Win32 binds a WndProc to a window CLASS,
-	// not to each window created with it - registerClassOnce registers
-	// exactly one WndProc (wndProc below), shared by every popup for the
-	// life of the process - so per-popup state like its text can't be
-	// captured in a per-call closure (an earlier version of this code
-	// tried that: only the very first Show call's text ever actually
-	// registered, since RegisterClassExW silently no-ops on every call
-	// after that, leaving every later popup painting through the first
-	// call's closure - i.e. permanently stuck showing the first
-	// message). wndProc looks the right text up from here by the hwnd
-	// Windows actually gives it, which is always correct.
-	texts = make(map[uintptr]*uint16)
+	startOnce sync.Once
+	ready     = make(chan struct{})
+	// hwnd is the overlay window, or 0 if it couldn't be created. run sets
+	// it once before closing ready, so reading it after <-ready is safe.
+	hwnd uintptr
 
-	registerClassOnce sync.Once
-	registeredClass   *uint16
+	// font and background are created with the window and, like it, live
+	// for the rest of the process.
+	font, background uintptr
+
+	textMu sync.Mutex
+	text   []uint16 // NUL-terminated text to show; replaced, never mutated
 )
 
-// Show displays message in the overlay, replacing whatever it's
-// currently showing (if anything) so a burst of rapid switches only
-// ever shows the latest one.
+// Show displays message in the overlay for a couple of seconds. Calling it
+// again while the overlay is up replaces the text and restarts the
+// countdown, so a burst of rapid switches only ever shows the latest one.
 func Show(message string) {
-	mu.Lock()
-	generation++
-	myGeneration := generation
-	old := hwndCurrent
-	mu.Unlock()
-
-	if old != 0 {
-		procPostMessageW.Call(old, wmClose, 0, 0)
-	}
-
-	go run(message, myGeneration)
-}
-
-// registerClass registers the overlay window class exactly once, with a
-// single WndProc shared by every popup - see the texts comment above for
-// why per-call state must not be captured in it.
-func registerClass(hInstance uintptr) *uint16 {
-	registerClassOnce.Do(func() {
-		classNamePtr, _ := syscall.UTF16PtrFromString(className)
-		wc := wndClassExW{
-			LpfnWndProc:   syscall.NewCallback(wndProc),
-			HInstance:     hInstance,
-			LpszClassName: classNamePtr,
-		}
-		wc.CbSize = uint32(unsafe.Sizeof(wc))
-		procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
-		registeredClass = classNamePtr
-	})
-	return registeredClass
-}
-
-func wndProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
-	switch message {
-	case wmPaint:
-		mu.Lock()
-		msgPtr := texts[hwnd]
-		mu.Unlock()
-		paint(hwnd, msgPtr)
-		return 0
-	case wmTimer:
-		procKillTimer.Call(hwnd, timerID)
-		procDestroyWindow.Call(hwnd)
-		return 0
-	case wmClose:
-		procDestroyWindow.Call(hwnd)
-		return 0
-	case wmDestroy:
-		mu.Lock()
-		if hwndCurrent == hwnd {
-			hwndCurrent = 0
-		}
-		delete(texts, hwnd)
-		mu.Unlock()
-		procPostQuitMessage.Call(0)
-		return 0
-	}
-	r, _, _ := procDefWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
-	return r
-}
-
-func run(message string, myGeneration uint64) {
-	// A window's message queue belongs to the OS thread that created
-	// it - GetMessageW/DispatchMessageW below must run on that same
-	// thread, which Go doesn't otherwise guarantee across the blocking
-	// syscalls in between unless the goroutine is pinned.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	hInstance, _, _ := procGetModuleHandleW.Call(0)
-	classNamePtr := registerClass(hInstance)
-	msgPtr, _ := syscall.UTF16PtrFromString(message)
-
-	screenW, _, _ := procGetSystemMetrics.Call(smCxscreen)
-	screenH, _, _ := procGetSystemMetrics.Call(smCyscreen)
-	x := (int32(screenW) - windowWidth) / 2
-	y := int32(screenH) - windowHeight - bottomMargin
-
-	hwnd, _, _ := procCreateWindowExW.Call(
-		uintptr(wsExLayered|wsExTopmost|wsExToolWindow|wsExNoActivate),
-		uintptr(unsafe.Pointer(classNamePtr)),
-		0,
-		uintptr(wsPopup),
-		uintptr(x), uintptr(y), uintptr(windowWidth), uintptr(windowHeight),
-		0, 0, hInstance, 0,
-	)
+	startOnce.Do(func() { go run() })
+	<-ready
 	if hwnd == 0 {
 		return
 	}
 
-	mu.Lock()
-	superseded := generation != myGeneration
-	if !superseded {
-		hwndCurrent = hwnd
-		texts[hwnd] = msgPtr
-	}
-	mu.Unlock()
-	if superseded {
-		// A newer Show call already came and went (or is about to)
-		// while this one was still creating its window - never publish
-		// or display stale content over whatever it showed.
-		procDestroyWindow.Call(hwnd)
+	u, err := windows.UTF16FromString(message)
+	if err != nil {
 		return
 	}
+	textMu.Lock()
+	text = u
+	textMu.Unlock()
+	procPostMessageW.Call(hwnd, wmShowOSD, 0, 0)
+}
 
-	hRgn, _, _ := procCreateRoundRectRgn.Call(0, 0, windowWidth+1, windowHeight+1, cornerRadius, cornerRadius)
-	procSetWindowRgn.Call(hwnd, hRgn, 1)
-	procSetLayeredWindowAttributes.Call(hwnd, 0, 235, lwaAlpha)
+// run owns the overlay window for the whole process. Win32 delivers a
+// window's messages only to the thread that created it, so creating,
+// painting, showing and hiding it all happen here, on one pinned OS
+// thread, driven by the messages Show posts.
+func run() {
+	runtime.LockOSThread()
 
-	procShowWindow.Call(hwnd, swShowNoActivate)
-	procUpdateWindow.Call(hwnd)
-	procSetTimer.Call(hwnd, timerID, displayMs, 0)
+	hwnd = createWindow()
+	close(ready)
+	if hwnd == 0 {
+		return
+	}
 
 	var m msg
 	for {
@@ -280,38 +188,96 @@ func run(message string, myGeneration uint64) {
 	}
 }
 
-func paint(hwnd uintptr, msgPtr *uint16) {
-	var ps paintStruct
-	hdc, _, _ := procBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
-	defer procEndPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
+// createWindow creates the (initially hidden) overlay window and the GDI
+// objects it paints with, returning 0 on failure.
+func createWindow() uintptr {
+	var hInstance windows.Handle
+	if err := windows.GetModuleHandleEx(0, nil, &hInstance); err != nil {
+		return 0
+	}
+	classNamePtr, _ := windows.UTF16PtrFromString(className)
+	wc := wndClassExW{
+		LpfnWndProc:   syscall.NewCallback(wndProc),
+		HInstance:     uintptr(hInstance),
+		LpszClassName: classNamePtr,
+	}
+	wc.CbSize = uint32(unsafe.Sizeof(wc))
+	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
 
-	bg, _, _ := procCreateSolidBrush.Call(rgb(32, 32, 32))
-	defer procDeleteObject.Call(bg)
+	h, _, _ := procCreateWindowExW.Call(
+		wsExLayered|wsExTopmost|wsExToolWindow|wsExNoActivate,
+		uintptr(unsafe.Pointer(classNamePtr)),
+		0,
+		wsPopup,
+		0, 0, windowWidth, windowHeight,
+		0, 0, uintptr(hInstance), 0,
+	)
+	if h == 0 {
+		return 0
+	}
+
+	rgn, _, _ := procCreateRoundRectRgn.Call(0, 0, windowWidth+1, windowHeight+1, cornerRadius, cornerRadius)
+	procSetWindowRgn.Call(h, rgn, 1)
+	procSetLayeredWindowAttributes.Call(h, 0, 235, lwaAlpha)
+
+	face, _ := windows.UTF16PtrFromString("Segoe UI")
+	font, _, _ = procCreateFontW.Call(20, 0, 0, 0, 400, 0, 0, 0, defaultCharset, 0, 0, 0, 0, uintptr(unsafe.Pointer(face)))
+	background, _, _ = procCreateSolidBrush.Call(rgb(32, 32, 32))
+	return h
+}
+
+func wndProc(h uintptr, message uint32, wParam, lParam uintptr) uintptr {
+	switch message {
+	case wmShowOSD:
+		// Placed on every show, in case the screen resolution changed.
+		screenW, _, _ := procGetSystemMetrics.Call(smCxscreen)
+		screenH, _, _ := procGetSystemMetrics.Call(smCyscreen)
+		x := (int32(screenW) - windowWidth) / 2
+		y := int32(screenH) - windowHeight - bottomMargin
+		procSetWindowPos.Call(h, hwndTopmost, uintptr(x), uintptr(y), 0, 0, swpNoSize|swpNoActivate|swpShowWindow)
+		procInvalidateRect.Call(h, 0, 1)
+		procUpdateWindow.Call(h)
+		procSetTimer.Call(h, timerID, displayMs, 0) // restarts the countdown if it's already running
+		return 0
+	case wmTimer:
+		procKillTimer.Call(h, timerID)
+		procShowWindow.Call(h, swHide)
+		return 0
+	case wmPaint:
+		paint(h)
+		return 0
+	}
+	r, _, _ := procDefWindowProcW.Call(h, uintptr(message), wParam, lParam)
+	return r
+}
+
+func paint(h uintptr) {
+	var ps paintStruct
+	hdc, _, _ := procBeginPaint.Call(h, uintptr(unsafe.Pointer(&ps)))
+	defer procEndPaint.Call(h, uintptr(unsafe.Pointer(&ps)))
 
 	full := rect{0, 0, windowWidth, windowHeight}
-	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&full)), bg)
+	procFillRect.Call(hdc, uintptr(unsafe.Pointer(&full)), background)
 
-	facePtr, _ := syscall.UTF16PtrFromString("Segoe UI")
-	font, _, _ := procCreateFontW.Call(
-		20, 0, 0, 0, 400,
-		0, 0, 0,
-		1, 0, 0, 0, 0,
-		uintptr(unsafe.Pointer(facePtr)),
-	)
-	defer procDeleteObject.Call(font)
+	textMu.Lock()
+	t := text
+	textMu.Unlock()
+	if len(t) == 0 {
+		return
+	}
+
 	oldFont, _, _ := procSelectObject.Call(hdc, font)
 	defer procSelectObject.Call(hdc, oldFont)
-
 	procSetTextColor.Call(hdc, rgb(255, 255, 255))
 	procSetBkMode.Call(hdc, transparentBk)
 
 	textRect := rect{Left: textMarginX, Top: 0, Right: windowWidth - textMarginX, Bottom: windowHeight}
 	procDrawTextW.Call(
 		hdc,
-		uintptr(unsafe.Pointer(msgPtr)),
-		^uintptr(0), // -1: msgPtr is null-terminated, so DrawTextW should compute its length
+		uintptr(unsafe.Pointer(&t[0])),
+		^uintptr(0), // -1: t is NUL-terminated, so DrawTextW computes its length
 		uintptr(unsafe.Pointer(&textRect)),
-		uintptr(dtCenter|dtVcenter|dtSingleLine|dtEndEllipsis|dtNoPrefix),
+		dtCenter|dtVcenter|dtSingleLine|dtEndEllipsis|dtNoPrefix,
 	)
 }
 
