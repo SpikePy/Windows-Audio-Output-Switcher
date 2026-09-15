@@ -63,12 +63,12 @@ type app struct {
 	deviceSlots [maxDeviceSlots]deviceSlot
 	deviceMu    sync.Mutex
 
-	// skip holds the device names excluded from cycling (see
-	// internal/outputconfig). It's always replaced wholesale, never
-	// mutated in place, so reading it under skipMu and then using the
-	// returned map after unlocking is safe.
-	skip   map[string]bool
-	skipMu sync.Mutex
+	// cfg holds each known device's saved settings (alias, skip), keyed
+	// by device name (see internal/outputconfig). It's always replaced
+	// wholesale, never mutated in place, so reading it under cfgMu and
+	// then using the returned map after unlocking is safe.
+	cfg   map[string]outputconfig.Entry
+	cfgMu sync.Mutex
 
 	// configModTime is the output config file's mtime as of the last
 	// time it was read (by us writing it, or by picking up an edit made
@@ -96,7 +96,7 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	a := &app{skip: outputconfig.Load(), configModTime: outputconfig.ModTime()}
+	a := &app{cfg: outputconfig.Load(), configModTime: outputconfig.ModTime()}
 	systray.Run(a.onReady, a.onExit)
 }
 
@@ -112,7 +112,7 @@ func (a *app) onReady() {
 	}
 	systray.AddSeparator()
 
-	a.mConfigOutputs = systray.AddMenuItem("Configure", "Open the output config file to choose which outputs to include when switching")
+	a.mConfigOutputs = systray.AddMenuItem("Configure", "Open the device config file to rename or exclude outputs")
 	systray.AddSeparator()
 	a.mExit = systray.AddMenuItem("Exit", "Quit Audio Output Switcher")
 
@@ -191,18 +191,18 @@ func (a *app) openConfigFile() {
 		names[i] = d.Name
 	}
 
-	a.skipMu.Lock()
-	skip := a.skip
-	a.skipMu.Unlock()
+	a.cfgMu.Lock()
+	cfg := a.cfg
+	a.cfgMu.Unlock()
 
-	merged, err := outputconfig.Sync(names, skip)
+	merged, err := outputconfig.Sync(names, cfg)
 	if err != nil {
 		log.Printf("sync output config: %v", err)
 		return
 	}
-	a.skipMu.Lock()
-	a.skip = merged
-	a.skipMu.Unlock()
+	a.cfgMu.Lock()
+	a.cfg = merged
+	a.cfgMu.Unlock()
 	a.configMu.Lock()
 	a.configModTime = outputconfig.ModTime()
 	a.configMu.Unlock()
@@ -243,9 +243,25 @@ func (a *app) reloadConfigIfChanged() {
 		return
 	}
 
-	a.skipMu.Lock()
-	a.skip = outputconfig.Load()
-	a.skipMu.Unlock()
+	a.cfgMu.Lock()
+	a.cfg = outputconfig.Load()
+	a.cfgMu.Unlock()
+}
+
+// skipSet returns the set of device names currently excluded from
+// cycling, derived from cfg.
+func (a *app) skipSet() map[string]bool {
+	a.cfgMu.Lock()
+	cfg := a.cfg
+	a.cfgMu.Unlock()
+
+	skip := make(map[string]bool, len(cfg))
+	for name, e := range cfg {
+		if e.Skip {
+			skip[name] = true
+		}
+	}
+	return skip
 }
 
 // watchDeviceSlot forwards clicks on one tray menu device entry to a
@@ -288,9 +304,9 @@ func (a *app) syncDeviceMenu() {
 		log.Printf("get current device: %v", err)
 	}
 
-	a.skipMu.Lock()
-	skip := a.skip
-	a.skipMu.Unlock()
+	a.cfgMu.Lock()
+	cfg := a.cfg
+	a.cfgMu.Unlock()
 
 	systray.SetTooltip(a.tooltip(current.Name))
 
@@ -306,12 +322,12 @@ func (a *app) syncDeviceMenu() {
 		}
 
 		d := devices[i]
-		title := d.Name
-		if skip[d.Name] {
+		title := outputconfig.DisplayName(cfg, d.Name)
+		if cfg[d.Name].Skip {
 			title += excludedSuffix
 		}
 		item.SetTitle(title)
-		item.SetTooltip("Switch to " + d.Name)
+		item.SetTooltip("Switch to " + title)
 		a.deviceSlots[i].id = d.ID
 		if d.ID == current.ID {
 			item.Check()
@@ -323,11 +339,7 @@ func (a *app) syncDeviceMenu() {
 }
 
 func (a *app) switchOutput() {
-	a.skipMu.Lock()
-	skip := a.skip
-	a.skipMu.Unlock()
-
-	result := a.worker.Next(skip)
+	result := a.worker.Next(a.skipSet())
 	switch {
 	case result.Err != nil:
 		log.Printf("switch output: %v", result.Err)
