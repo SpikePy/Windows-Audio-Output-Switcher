@@ -150,11 +150,11 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | ------------------------ | ----------------------------------------------------------------- |
 | `cmd/switcher`           | The tray application                                             |
 | `cmd/setup`              | Interactive install/update/uninstall menu                       |
-| `internal/audio`         | Core Audio API + `IPolicyConfig` bindings                        |
+| `internal/audio`         | Core Audio API + `IPolicyConfig` bindings, device notifications  |
 | `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
 | `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `devices.yaml` |
 | `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
-| `internal/updater`       | GitHub release lookup/download used by `internal/install`        |
+| `internal/updater`       | GitHub release lookup/download over WinHTTP, for `internal/install` |
 | `assets/icons`           | Embedded tray/exe icon                                           |
