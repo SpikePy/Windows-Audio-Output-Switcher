@@ -35,16 +35,20 @@ overlay telling you which one is now active.
     defaults to `win+s` if left blank. Switching to a bad or unregistrable
     value keeps whatever hotkey was already working active instead of
     leaving you with none.
-  - `poll_seconds` — how often, in the background, to check for
-    plugged/unplugged devices and pick up hand-edits to this file;
-    defaults to `60` if left blank or set to `0` or less. Switching
-    outputs always re-checks immediately regardless of this interval.
-  - `outputs` — kept in sync with every device that's ever been seen: a
-    newly connected device is added automatically, and a disconnected one
-    keeps its row (never deleted automatically, only by editing it out
-    yourself) — with, per device:
+  - `poll_seconds` — how often to check this file for hand-edits (and
+    re-check devices as a fallback); defaults to `60` if left blank or
+    set to `0` or less. Device changes — plugging in, unplugging, or
+    changing the default output in Windows' own sound settings — are
+    picked up instantly via Windows' device notifications, regardless of
+    this interval.
+  - `outputs` — kept in sync with every device that's ever been seen,
+    matched by its Windows device ID (so renaming a device, or having two
+    with the same name, keeps their settings apart): a newly connected
+    device is added automatically, and a disconnected one keeps its row
+    (never deleted automatically, only by editing it out yourself) —
+    with, per device:
     - `alias` — the name shown for it in the right-click menu and the
-      OSD; defaults to the real device name.
+      OSD; filled in with the device's Windows name if left blank.
     - `skip` — set to `true` to leave it out of hotkey/left-click
       cycling. It's still shown in the right-click menu (as
       "*(excluded)*") and stays fully clickable there, so you can switch
@@ -52,8 +56,11 @@ overlay telling you which one is now active.
     - `last_seen` — when it was last detected as active, updated
       automatically; useful for spotting stale entries worth deleting by
       hand.
+    - `id` — the Windows device ID the row belongs to; don't edit it.
 
-  Edits are picked up automatically, no restart needed.
+  Edits are picked up automatically, no restart needed. If a save leaves
+  the file invalid (e.g. a YAML typo), the app keeps its previous settings,
+  tells you so, and won't write to the file until it's fixed.
 
 It's a single ~8 MB `.exe` with no installation dependencies, no admin
 rights required, and nothing running except while you're logged in.

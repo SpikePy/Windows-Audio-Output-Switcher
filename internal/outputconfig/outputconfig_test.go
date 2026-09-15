@@ -13,10 +13,23 @@ func withTempAppData(t *testing.T) {
 	t.Setenv("APPDATA", t.TempDir())
 }
 
+func writeConfig(t *testing.T, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(Path()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 	withTempAppData(t)
 
-	c := Load()
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
 	if len(c.Devices) != 0 {
 		t.Errorf("Devices = %v, want none", c.Devices)
 	}
@@ -28,17 +41,29 @@ func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadMalformedFileUsesDefaults(t *testing.T) {
+func TestLoadMalformedFileReportsError(t *testing.T) {
 	withTempAppData(t)
-	if err := os.MkdirAll(filepath.Dir(Path()), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(Path(), []byte("outputs: [unterminated"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeConfig(t, "outputs: [unterminated")
 
-	if c := Load(); len(c.Devices) != 0 || c.Hotkey != "" || c.PollSeconds != 0 {
-		t.Errorf("Load() = %+v, want an empty config", c)
+	c, err := Load()
+	if err == nil {
+		t.Fatal("Load() succeeded on a malformed file, want an error")
+	}
+	if len(c.Devices) != 0 || c.EffectiveHotkey() != DefaultHotkey {
+		t.Errorf("Load() = %+v, want defaults alongside the error", c)
+	}
+}
+
+func TestLoadSkipsRowsWithoutID(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, "outputs:\n  - alias: No ID\n  - alias: Desk\n    id: dev-1\n")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Devices) != 1 || c.Devices["dev-1"].Alias != "Desk" {
+		t.Errorf("Devices = %+v, want only the row with an ID", c.Devices)
 	}
 }
 
@@ -65,22 +90,26 @@ func TestEffectiveSettings(t *testing.T) {
 func TestSyncRoundTrip(t *testing.T) {
 	withTempAppData(t)
 
-	written, err := Sync("ctrl+alt+f9", 15, []string{"Speakers", "Headphones"}, nil)
+	active := []Device{{ID: "dev-1", Name: "Speakers"}, {ID: "dev-2", Name: "Headphones"}}
+	written, err := Sync("ctrl+alt+f9", 15, active, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	loaded := Load()
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if loaded.Hotkey != "ctrl+alt+f9" || loaded.PollSeconds != 15 {
 		t.Errorf("reloaded hotkey/poll = %q/%d, want %q/%d", loaded.Hotkey, loaded.PollSeconds, "ctrl+alt+f9", 15)
 	}
 	if len(loaded.Devices) != len(written) {
 		t.Fatalf("reloaded %d devices, want %d", len(loaded.Devices), len(written))
 	}
-	for name, want := range written {
-		got := loaded.Devices[name]
-		if got.Name != want.Name || got.Alias != want.Alias || got.Skip != want.Skip || !got.LastSeen.Equal(want.LastSeen) {
-			t.Errorf("reloaded %q = %+v, want %+v", name, got, want)
+	for id, want := range written {
+		got := loaded.Devices[id]
+		if got.ID != id || got.Alias != want.Alias || got.Skip != want.Skip || !got.LastSeen.Equal(want.LastSeen) {
+			t.Errorf("reloaded %q = %+v, want %+v", id, got, want)
 		}
 	}
 
@@ -91,56 +120,82 @@ func TestSyncRoundTrip(t *testing.T) {
 	if !strings.HasPrefix(string(data), "# Audio Output Switcher") {
 		t.Error("written file is missing its explanatory header")
 	}
+	if strings.Contains(string(data), "name:") {
+		t.Error("written file still has a name field")
+	}
+	if _, err := os.Stat(Path() + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("temporary file left behind: %v", err)
+	}
 }
 
 func TestSyncAddsNewDevicesAndKeepsDisconnectedOnes(t *testing.T) {
 	withTempAppData(t)
 	past := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	current := map[string]Entry{
-		"Old TV": {Name: "Old TV", Alias: "Living room", Skip: true, LastSeen: past},
+		"old": {ID: "old", Alias: "Living room", Skip: true, LastSeen: past},
 	}
 
-	got, err := Sync("", 0, []string{"Headset"}, current)
+	got, err := Sync("", 0, []Device{{ID: "new", Name: "Headset"}}, current)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if old := got["Old TV"]; old.Alias != "Living room" || !old.Skip || !old.LastSeen.Equal(past) {
+	if old := got["old"]; old.Alias != "Living room" || !old.Skip || !old.LastSeen.Equal(past) {
 		t.Errorf("disconnected device = %+v, want its settings and LastSeen kept", old)
 	}
-	added, ok := got["Headset"]
+	added, ok := got["new"]
 	if !ok {
 		t.Fatal("newly seen device was not added")
 	}
 	if added.Alias != "Headset" || added.Skip || !added.LastSeen.After(past) {
-		t.Errorf("new device = %+v, want alias defaulted to its name, not skipped, LastSeen stamped", added)
+		t.Errorf("new device = %+v, want alias defaulted to its Windows name, not skipped, LastSeen stamped", added)
 	}
 }
 
-func TestSyncFillsEmptyAlias(t *testing.T) {
+func TestSyncKeepsSameNamedDevicesApart(t *testing.T) {
 	withTempAppData(t)
+	current := map[string]Entry{"a": {ID: "a", Alias: "Front", Skip: true}}
+	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Speakers"}}
 
-	got, err := Sync("", 0, []string{"Speakers"}, map[string]Entry{"Speakers": {Name: "Speakers"}})
+	got, err := Sync("", 0, active, current)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if alias := got["Speakers"].Alias; alias != "Speakers" {
-		t.Errorf("alias = %q, want it defaulted to the device name", alias)
+	if a := got["a"]; a.Alias != "Front" || !a.Skip {
+		t.Errorf("device a = %+v, want its own alias and skip kept", a)
+	}
+	if b := got["b"]; b.Alias != "Speakers" || b.Skip {
+		t.Errorf("device b = %+v, want a fresh entry of its own", b)
+	}
+}
+
+func TestSyncFillsOnlyBlankAliases(t *testing.T) {
+	withTempAppData(t)
+	current := map[string]Entry{"a": {Alias: "Desk"}, "b": {}}
+	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Headset"}}
+
+	got, err := Sync("", 0, active, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["a"].Alias != "Desk" || got["b"].Alias != "Headset" {
+		t.Errorf("aliases = %q/%q, want the custom one kept and the blank one filled", got["a"].Alias, got["b"].Alias)
 	}
 }
 
 func TestDisplayName(t *testing.T) {
 	entries := map[string]Entry{
-		"Speakers": {Name: "Speakers", Alias: "Desk"},
-		"Headset":  {Name: "Headset"},
+		"a": {ID: "a", Alias: "Desk"},
+		"b": {ID: "b"},
 	}
-	for name, want := range map[string]string{
-		"Speakers": "Desk",
-		"Headset":  "Headset",
-		"Unknown":  "Unknown",
-	} {
-		if got := DisplayName(entries, name); got != want {
-			t.Errorf("DisplayName(%q) = %q, want %q", name, got, want)
+	tests := []struct{ id, windowsName, want string }{
+		{"a", "Speakers", "Desk"},
+		{"b", "Headset", "Headset"},
+		{"c", "Unknown", "Unknown"},
+	}
+	for _, tt := range tests {
+		if got := DisplayName(entries, tt.id, tt.windowsName); got != tt.want {
+			t.Errorf("DisplayName(%q, %q) = %q, want %q", tt.id, tt.windowsName, got, tt.want)
 		}
 	}
 }

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -45,6 +46,16 @@ const maxDeviceSlots = 16
 // label instead - they stay fully clickable for a direct, one-off switch.
 const excludedSuffix = "  (excluded)"
 
+// deviceChangeSettle is how long to wait after a device notification
+// before refreshing, so a burst of them (e.g. one default-changed per
+// audio role) causes a single refresh.
+const deviceChangeSettle = 300 * time.Millisecond
+
+// errConfigInvalid is returned by syncConfig while the config file on disk
+// fails to parse: writing it then would replace the user's hand-edits (and
+// every disconnected device's row) with defaults.
+var errConfigInvalid = errors.New("config file is invalid; not overwriting it")
+
 type deviceSlot struct {
 	item *systray.MenuItem
 	id   string
@@ -72,12 +83,13 @@ type app struct {
 	deviceSlots [maxDeviceSlots]deviceSlot
 	deviceMu    sync.Mutex
 
-	// cfgMu guards everything loaded from the config file. cfg is always
-	// replaced wholesale, never mutated, so a map read under cfgMu stays
-	// safe to use after unlocking.
+	// cfgMu guards everything loaded from the config file. cfg (keyed by
+	// device ID) is always replaced wholesale, never mutated, so a map read
+	// under cfgMu stays safe to use after unlocking.
 	cfg           map[string]outputconfig.Entry
-	pollInterval  time.Duration // background re-check interval; switches always re-check immediately
+	pollInterval  time.Duration // how often to re-check the config file (and devices, as a fallback)
 	configModTime time.Time     // file mtime as of the last read or write - see reloadConfigIfChanged
+	configErr     error         // non-nil while the file on disk fails to parse
 	cfgMu         sync.Mutex
 
 	mConfigOutputs *systray.MenuItem
@@ -100,10 +112,14 @@ func main() {
 	}
 	log.Printf("Audio Output Switcher %s starting", version)
 
-	loaded := outputconfig.Load()
+	loaded, err := outputconfig.Load()
+	if err != nil {
+		log.Printf("config file is invalid, using defaults until it's fixed: %v", err)
+	}
 	a := &app{
 		cfg:           loaded.Devices,
 		configModTime: outputconfig.ModTime(),
+		configErr:     err,
 		hotkeyCombo:   loaded.EffectiveHotkey(),
 		pollInterval:  loaded.EffectivePollInterval(),
 	}
@@ -131,6 +147,9 @@ func (a *app) onReady() {
 	systray.SetOnTapped(a.switchOutput)
 
 	a.worker = audio.StartWorker()
+	if a.configError() != nil {
+		osd.Show("Config file has an error - using defaults until it's fixed")
+	}
 	a.registerHotkey()
 	a.syncDeviceMenu()
 
@@ -219,9 +238,10 @@ func (a *app) openConfigFile() {
 		log.Printf("list devices for config file: %v", err)
 	}
 
-	if _, err := a.syncConfig(deviceNames(devices)); err != nil {
-		log.Printf("sync output config: %v", err)
-		return
+	// Open the file even if refreshing it failed - e.g. it has an error
+	// the user now needs to fix.
+	if _, err := a.syncConfig(devices); err != nil {
+		log.Printf("sync config: %v", err)
 	}
 	a.syncDeviceMenu()
 
@@ -232,13 +252,23 @@ func (a *app) openConfigFile() {
 }
 
 // syncConfig writes the config file via outputconfig.Sync (adding any
-// name in names it doesn't already have an entry for, refreshing
-// LastSeen for all of them, and never dropping an entry for a device
-// that isn't in names, or touching the saved hotkey/poll interval), and
-// updates a.cfg/a.configModTime to match.
-func (a *app) syncConfig(names []string) (map[string]outputconfig.Entry, error) {
-	pollSeconds := int(a.currentPollInterval() / time.Second)
-	merged, err := outputconfig.Sync(a.currentHotkey(), pollSeconds, names, a.devices())
+// device in devices it doesn't already have an entry for, refreshing
+// LastSeen for all of them, and never dropping an entry for a device that
+// isn't in devices, or touching the saved hotkey/poll interval), and
+// updates a.cfg/a.configModTime to match. It first picks up any edit made
+// since the file was last read, so it never writes over one - and refuses
+// to write at all while the file on disk fails to parse.
+func (a *app) syncConfig(devices []audio.Device) (map[string]outputconfig.Entry, error) {
+	a.reloadConfigIfChanged()
+
+	a.cfgMu.Lock()
+	cfg, pollInterval, configErr := a.cfg, a.pollInterval, a.configErr
+	a.cfgMu.Unlock()
+	if configErr != nil {
+		return nil, errConfigInvalid
+	}
+
+	merged, err := outputconfig.Sync(a.currentHotkey(), int(pollInterval/time.Second), toConfigDevices(devices), cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -251,20 +281,19 @@ func (a *app) syncConfig(names []string) (map[string]outputconfig.Entry, error) 
 	return merged, nil
 }
 
-// deviceNames returns the names of devices.
-func deviceNames(devices []audio.Device) []string {
-	names := make([]string, len(devices))
+func toConfigDevices(devices []audio.Device) []outputconfig.Device {
+	out := make([]outputconfig.Device, len(devices))
 	for i, d := range devices {
-		names[i] = d.Name
+		out[i] = outputconfig.Device{ID: d.ID, Name: d.Name}
 	}
-	return names
+	return out
 }
 
-// hasNewDevice reports whether devices contains a name with no entry in
-// cfg yet, e.g. one just plugged in.
+// hasNewDevice reports whether devices contains one with no entry in cfg
+// yet, e.g. one just plugged in.
 func hasNewDevice(devices []audio.Device, cfg map[string]outputconfig.Entry) bool {
 	for _, d := range devices {
-		if _, ok := cfg[d.Name]; !ok {
+		if _, ok := cfg[d.ID]; !ok {
 			return true
 		}
 	}
@@ -285,10 +314,10 @@ func openInDefaultApp(path string) error {
 
 // reloadConfigIfChanged picks up an edit made outside the app (i.e. in
 // whatever editor openConfigFile opened) by comparing the config file's
-// mtime against the last time it was read - device settings, and the
-// hotkey if it changed to something that still parses and registers
-// (an edit that doesn't is logged and otherwise ignored, leaving
-// whatever hotkey was already working active).
+// mtime against the last time it was read - device settings, the poll
+// interval, and the hotkey if it changed to something that still parses
+// and registers. If the edit left the file unparseable, the previous
+// settings stay in effect and the user is told.
 func (a *app) reloadConfigIfChanged() {
 	mt := outputconfig.ModTime()
 
@@ -303,11 +332,20 @@ func (a *app) reloadConfigIfChanged() {
 		return
 	}
 
-	loaded := outputconfig.Load()
+	loaded, err := outputconfig.Load()
+	if err != nil {
+		a.cfgMu.Lock()
+		a.configErr = err
+		a.cfgMu.Unlock()
+		log.Printf("config file is invalid, keeping previous settings: %v", err)
+		osd.Show("Config file has an error - keeping previous settings")
+		return
+	}
 
 	a.cfgMu.Lock()
 	a.cfg = loaded.Devices
 	a.pollInterval = loaded.EffectivePollInterval()
+	a.configErr = nil
 	a.cfgMu.Unlock()
 
 	if newCombo := loaded.EffectiveHotkey(); newCombo != a.currentHotkey() {
@@ -332,29 +370,34 @@ func (a *app) currentPollInterval() time.Duration {
 	return a.pollInterval
 }
 
+func (a *app) configError() error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	return a.configErr
+}
+
 func (a *app) currentHotkey() string {
 	a.hotkeyMu.Lock()
 	defer a.hotkeyMu.Unlock()
 	return a.hotkeyCombo
 }
 
-// skipSet returns the set of device names currently excluded from
-// cycling, derived from cfg.
+// skipSet returns the IDs of the devices currently excluded from cycling.
 func (a *app) skipSet() map[string]bool {
 	cfg := a.devices()
 	skip := make(map[string]bool, len(cfg))
-	for name, e := range cfg {
+	for id, e := range cfg {
 		if e.Skip {
-			skip[name] = true
+			skip[id] = true
 		}
 	}
 	return skip
 }
 
-// displayName returns the alias configured for the device named name,
-// or name itself if it has none - see outputconfig.DisplayName.
-func (a *app) displayName(name string) string {
-	return outputconfig.DisplayName(a.devices(), name)
+// displayName returns d's configured alias, or its Windows name if it has
+// none - see outputconfig.DisplayName.
+func (a *app) displayName(d audio.Device) string {
+	return outputconfig.DisplayName(a.devices(), d.ID, d.Name)
 }
 
 // watchDeviceSlot forwards clicks on one tray menu device entry to a
@@ -371,24 +414,37 @@ func (a *app) watchDeviceSlot(i int) {
 	}
 }
 
-// watchDeviceChanges periodically refreshes the device menu - at
-// a.pollInterval, outputconfig.DefaultPollSeconds unless customized in
-// the config file, picked up live if it's changed - so plugging or
-// unplugging a device (or switching it elsewhere) is reflected without
-// requiring a restart, and picks up edits made to the config file in
-// the meantime. switchOutput/switchTo call syncDeviceMenu directly right
-// after switching, so a switch is never left waiting on this interval.
+// watchDeviceChanges refreshes the device menu as soon as Windows reports
+// a device change (plugged in, unplugged, enabled/disabled, or the default
+// output changed elsewhere), and every a.pollInterval re-checks the config
+// file for hand-edits - plus the devices again, as a fallback in case
+// notifications aren't available.
 func (a *app) watchDeviceChanges() {
+	changes, err := a.worker.WatchChanges()
+	if err != nil {
+		log.Printf("device change notifications unavailable, relying on polling: %v", err)
+	}
+
 	interval := a.currentPollInterval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		a.reloadConfigIfChanged()
-		a.syncDeviceMenu()
+	for {
+		select {
+		case <-changes:
+			time.Sleep(deviceChangeSettle)
+			select {
+			case <-changes:
+			default:
+			}
+			a.syncDeviceMenu()
+		case <-ticker.C:
+			a.reloadConfigIfChanged()
+			a.syncDeviceMenu()
 
-		if newInterval := a.currentPollInterval(); newInterval != interval {
-			interval = newInterval
-			ticker.Reset(interval)
+			if newInterval := a.currentPollInterval(); newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
 }
@@ -408,14 +464,16 @@ func (a *app) syncDeviceMenu() {
 
 	cfg := a.devices()
 	if hasNewDevice(devices, cfg) {
-		if merged, err := a.syncConfig(deviceNames(devices)); err != nil {
-			log.Printf("auto-add new device(s) to config: %v", err)
-		} else {
+		merged, err := a.syncConfig(devices)
+		switch {
+		case err == nil:
 			cfg = merged
+		case !errors.Is(err, errConfigInvalid):
+			log.Printf("auto-add new device(s) to config: %v", err)
 		}
 	}
 
-	systray.SetTooltip(a.tooltip(outputconfig.DisplayName(cfg, current.Name)))
+	systray.SetTooltip(a.tooltip(outputconfig.DisplayName(cfg, current.ID, current.Name)))
 
 	a.deviceMu.Lock()
 	defer a.deviceMu.Unlock()
@@ -429,8 +487,8 @@ func (a *app) syncDeviceMenu() {
 		}
 
 		d := devices[i]
-		title := outputconfig.DisplayName(cfg, d.Name)
-		if cfg[d.Name].Skip {
+		title := outputconfig.DisplayName(cfg, d.ID, d.Name)
+		if cfg[d.ID].Skip {
 			title += excludedSuffix
 		}
 		item.SetTitle(title)
@@ -455,9 +513,9 @@ func (a *app) switchOutput() {
 		log.Printf("switch output: %v", result.Err)
 		osd.Show("Could not switch output: " + result.Err.Error())
 	case !result.Switched:
-		osd.Show("Only one output available: " + a.displayName(result.Device.Name))
+		osd.Show("Only one output available: " + a.displayName(result.Device))
 	default:
-		osd.Show(a.displayName(result.Device.Name))
+		osd.Show(a.displayName(result.Device))
 	}
 	a.syncDeviceMenu()
 }
@@ -474,7 +532,7 @@ func (a *app) switchTo(id string) {
 		log.Printf("switch output: %v", result.Err)
 		osd.Show("Could not switch output: " + result.Err.Error())
 	case result.Switched:
-		osd.Show(a.displayName(result.Device.Name))
+		osd.Show(a.displayName(result.Device))
 	}
 	a.syncDeviceMenu()
 }

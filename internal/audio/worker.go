@@ -53,6 +53,7 @@ func (w *Worker) run() {
 		case task := <-w.tasks:
 			task()
 		case <-w.quit:
+			stopWatching()
 			return
 		}
 	}
@@ -69,7 +70,7 @@ func (w *Worker) do(task func()) {
 }
 
 // Next switches to the next playback device in the list, wrapping
-// around after the last one. Devices whose name is in excluded are
+// around after the last one. Devices whose ID is in excluded are
 // skipped over entirely.
 func (w *Worker) Next(excluded map[string]bool) SwitchResult {
 	var result SwitchResult
@@ -116,7 +117,7 @@ func cycleNext(excluded map[string]bool) SwitchResult {
 
 	devices := make([]Device, 0, len(all))
 	for _, d := range all {
-		if !excluded[d.Name] {
+		if !excluded[d.ID] {
 			devices = append(devices, d)
 		}
 	}
