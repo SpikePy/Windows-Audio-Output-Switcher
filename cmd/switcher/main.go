@@ -89,7 +89,7 @@ func main() {
 
 func (a *app) onReady() {
 	systray.SetIcon(icons.IconEnabled)
-	systray.SetTooltip(a.tooltip())
+	systray.SetTooltip(a.tooltip(""))
 
 	for i := range a.deviceSlots {
 		item := systray.AddMenuItemCheckbox("", "", false)
@@ -249,6 +249,8 @@ func (a *app) syncDeviceMenu() {
 	skip := a.skip
 	a.skipMu.Unlock()
 
+	systray.SetTooltip(a.tooltip(current.Name))
+
 	a.deviceMu.Lock()
 	defer a.deviceMu.Unlock()
 
@@ -309,6 +311,9 @@ func (a *app) switchTo(id string) {
 	a.syncDeviceMenu()
 }
 
-func (a *app) tooltip() string {
-	return fmt.Sprintf("Audio Output Switcher %s — hotkey %s\nLeft-click: switch now. Right-click: pick a device.", version, hotkeyCombo)
+func (a *app) tooltip(currentName string) string {
+	if currentName == "" {
+		return fmt.Sprintf("Audio Output Switcher %s — hotkey %s\nLeft-click: switch now. Right-click: pick a device.", version, hotkeyCombo)
+	}
+	return fmt.Sprintf("Audio Output Switcher %s — active: %s\nLeft-click: switch now. Right-click: pick a device.", version, currentName)
 }
