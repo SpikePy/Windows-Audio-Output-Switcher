@@ -60,6 +60,14 @@ type app struct {
 	worker *audio.Worker
 	hk     *llhotkey.Hotkey
 
+	// switchMu serializes switchOutput/switchTo end to end - from
+	// performing the switch through announcing it in the OSD - across
+	// every trigger path (hotkey, tray left-click, and each per-device
+	// menu item), which otherwise run on independent goroutines with
+	// nothing else keeping a later switch's announcement from racing
+	// ahead of, or losing to, an earlier one's.
+	switchMu sync.Mutex
+
 	deviceSlots [maxDeviceSlots]deviceSlot
 	deviceMu    sync.Mutex
 
@@ -384,6 +392,9 @@ func (a *app) syncDeviceMenu() {
 }
 
 func (a *app) switchOutput() {
+	a.switchMu.Lock()
+	defer a.switchMu.Unlock()
+
 	result := a.worker.Next(a.skipSet())
 	switch {
 	case result.Err != nil:
@@ -400,6 +411,9 @@ func (a *app) switchOutput() {
 // switchTo makes the device with the given ID active directly, as
 // requested from the tray menu's device list.
 func (a *app) switchTo(id string) {
+	a.switchMu.Lock()
+	defer a.switchMu.Unlock()
+
 	result := a.worker.SwitchTo(id)
 	switch {
 	case result.Err != nil:
