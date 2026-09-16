@@ -7,7 +7,9 @@
 package install
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,12 +18,13 @@ import (
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
 
-// Install downloads the latest release (unless the installed one is
-// already current) into the current user's Startup folder under a fixed
-// name, and (re)starts it. Calling it again later updates in place: the
-// fixed filename guarantees there is always exactly one autostart entry,
-// and the version check guarantees the newest release is the one
-// running.
+// Install downloads the latest release and, if it differs from the copy
+// in the current user's Startup folder, puts it there under a fixed name
+// and (re)starts it. Calling it again later updates in place: the fixed
+// filename guarantees there is always exactly one autostart entry, and
+// comparing the download against the installed copy - rather than
+// recording the installed version in a file somewhere - is what decides
+// whether anything needs replacing.
 func Install() error {
 	fmt.Println("Checking for the latest release...")
 
@@ -31,13 +34,22 @@ func Install() error {
 	}
 
 	exePath := updater.InstalledExePath()
-	_, statErr := os.Stat(exePath)
-	exeExists := statErr == nil
+	if err := os.MkdirAll(updater.StartupDir(), 0o755); err != nil {
+		return fmt.Errorf("create startup folder: %w", err)
+	}
 
-	currentVersion, _ := os.ReadFile(updater.VersionFilePath())
-	needsUpdate := !exeExists || string(currentVersion) != release.TagName
+	fmt.Printf("Downloading %s...\n", release.TagName)
+	downloaded := exePath + ".new"
+	if err := updater.Download(updater.AssetDownloadURL(release.TagName, updater.AssetName), downloaded); err != nil {
+		return fmt.Errorf("download %s: %w", updater.AssetName, err)
+	}
+	defer os.Remove(downloaded) // a no-op once it has been renamed into place
 
-	if !needsUpdate {
+	same, err := sameContents(downloaded, exePath)
+	if err != nil {
+		return fmt.Errorf("compare with the installed copy: %w", err)
+	}
+	if same {
 		fmt.Printf("Already up to date (%s).\n", release.TagName)
 		if !updater.IsRunning() {
 			fmt.Println("Starting Audio Output Switcher...")
@@ -49,10 +61,6 @@ func Install() error {
 	fmt.Printf("Installing %s...\n", release.TagName)
 	updater.KillRunning()
 
-	if err := os.MkdirAll(updater.StartupDir(), 0o755); err != nil {
-		return fmt.Errorf("create startup folder: %w", err)
-	}
-
 	// A running exe can still be renamed out of the way on Windows even
 	// though it can't be overwritten directly. Always deploying under
 	// the same fixed name is what keeps there from ever being more than
@@ -60,21 +68,11 @@ func Install() error {
 	oldPath := exePath + ".old"
 	_ = os.Remove(oldPath)
 	_ = os.Rename(exePath, oldPath)
-
-	downloadURL := updater.AssetDownloadURL(release.TagName, updater.AssetName)
-	if err := updater.Download(downloadURL, exePath); err != nil {
+	if err := os.Rename(downloaded, exePath); err != nil {
 		_ = os.Rename(oldPath, exePath) // best-effort rollback
-		return fmt.Errorf("download %s: %w", updater.AssetName, err)
+		return fmt.Errorf("replace %s: %w", exePath, err)
 	}
 	_ = os.Remove(oldPath)
-
-	if err := os.MkdirAll(filepath.Dir(updater.VersionFilePath()), 0o755); err != nil {
-		return fmt.Errorf("create config folder: %w", err)
-	}
-	if err := os.WriteFile(updater.VersionFilePath(), []byte(release.TagName), 0o644); err != nil {
-		return fmt.Errorf("write version marker: %w", err)
-	}
-	// Versions up to v1.0.4 kept this marker in the Startup folder itself.
 	_ = os.Remove(updater.LegacyVersionFilePath())
 
 	fmt.Println("Starting Audio Output Switcher...")
@@ -86,12 +84,63 @@ func Install() error {
 	return nil
 }
 
+// sameContents reports whether both files hold exactly the same bytes. A
+// missing second file counts as different rather than an error, since
+// that's just a first install.
+func sameContents(a, b string) (bool, error) {
+	statA, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	statB, err := os.Stat(b)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if statA.Size() != statB.Size() {
+		return false, nil
+	}
+
+	fileA, err := os.Open(a)
+	if err != nil {
+		return false, err
+	}
+	defer fileA.Close()
+	fileB, err := os.Open(b)
+	if err != nil {
+		return false, err
+	}
+	defer fileB.Close()
+
+	bufA := make([]byte, 64*1024)
+	bufB := make([]byte, 64*1024)
+	for {
+		nA, errA := io.ReadFull(fileA, bufA)
+		nB, errB := io.ReadFull(fileB, bufB)
+		if nA != nB || !bytes.Equal(bufA[:nA], bufB[:nB]) {
+			return false, nil
+		}
+		// The sizes match, so both files run out at the same point.
+		if errA == io.EOF || errA == io.ErrUnexpectedEOF {
+			return true, nil
+		}
+		if errA != nil {
+			return false, errA
+		}
+		if errB != nil {
+			return false, errB
+		}
+	}
+}
+
 // Uninstall stops Audio Output Switcher and removes everything Install
-// set up - the Startup folder entry, its saved config, and a legacy Start
-// Menu shortcut from versions old enough to have created one - leaving no
-// trace behind. It does not touch the setup tool itself; the caller is
-// responsible for that (see cmd/setup, which self-deletes after a
-// successful uninstall).
+// set up - the Startup folder entry, its saved config, and the leftovers
+// of older versions (a version marker next to the exe, a Start Menu
+// shortcut) - leaving no trace behind. It does not touch the setup tool
+// itself; the caller is responsible for that (see cmd/setup, which
+// self-deletes after a successful uninstall).
 func Uninstall() error {
 	fmt.Println("Stopping Audio Output Switcher...")
 	updater.KillRunning()
@@ -99,12 +148,13 @@ func Uninstall() error {
 
 	removeAll(updater.InstalledExePath())
 	removeAll(updater.InstalledExePath() + ".old")
+	removeAll(updater.InstalledExePath() + ".new")
 	removeAll(updater.LegacyVersionFilePath())
 	removeAll(legacyShortcutPath())
 	// Everything under here - config.yaml (devices.yaml/outputs.yaml in
-	// older versions), the version marker, and (up to v0.9.3) config.json
-	// - lives in this one directory, so removing it wholesale covers
-	// every version's settings in one go.
+	// older versions) and, up to v0.9.3, config.json - lives in this one
+	// directory, so removing it wholesale covers every version's settings
+	// in one go.
 	removeAll(filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher"))
 
 	fmt.Println("Audio Output Switcher has been removed.")

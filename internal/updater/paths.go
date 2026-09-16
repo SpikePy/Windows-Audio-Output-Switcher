@@ -8,8 +8,6 @@ package updater
 import (
 	"os"
 	"path/filepath"
-
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 )
 
 const (
@@ -28,10 +26,10 @@ const (
 	// autostart entry, even across updates.
 	ExeName = "AudioOutputSwitcher.exe"
 
-	versionFileName = "version"
-
-	// legacyVersionFileName is where the marker used to be written: into
-	// the Startup folder itself, which is no place for a data file.
+	// legacyVersionFileName is a marker versions up to v1.0.4 wrote next
+	// to the installed exe to remember what they had installed. Nothing
+	// writes it anymore - install compares the downloaded release with
+	// the installed copy instead - so it's only ever deleted.
 	legacyVersionFileName = ".audiooutputswitcher_version"
 )
 
@@ -46,14 +44,8 @@ func InstalledExePath() string {
 	return filepath.Join(StartupDir(), ExeName)
 }
 
-// VersionFilePath stores the tag name of the currently installed release,
-// alongside the app's config rather than in the Startup folder.
-func VersionFilePath() string {
-	return filepath.Join(outputconfig.Dir(), versionFileName)
-}
-
-// LegacyVersionFilePath is where that marker used to live; install and
-// uninstall delete it so it doesn't linger in the Startup folder.
+// LegacyVersionFilePath is that leftover marker, which install and
+// uninstall delete so it doesn't linger in the Startup folder.
 func LegacyVersionFilePath() string {
 	return filepath.Join(StartupDir(), legacyVersionFileName)
 }

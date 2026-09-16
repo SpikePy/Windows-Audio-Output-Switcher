@@ -44,10 +44,11 @@ rights required, and nothing running except while you're logged in.
 2. Choose **1) Install or update**. It downloads the newest
    `AudioOutputSwitcher.exe`, places it in your Startup folder, and starts
    it immediately — no reboot needed.
-3. Running setup again at any time re-checks for updates. It always deploys
-   under the same fixed filename, so there is only ever a single Startup
-   entry, and it makes sure the process that ends up running is the one it
-   just installed.
+3. Running setup again at any time re-checks for updates: it downloads the
+   latest release and only replaces the installed copy if it actually
+   differs. It always deploys under the same fixed filename, so there is
+   only ever a single Startup entry, and nothing else is left lying around
+   to keep track of versions.
 
 The switcher itself has no window; look for its icon in the system tray
 (you may need to expand the "hidden icons" arrow the first time).
