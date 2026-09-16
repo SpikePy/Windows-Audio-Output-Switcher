@@ -10,10 +10,13 @@ Windows parts actually work.
 `%APPDATA%\AudioOutputSwitcher\devices.yaml` in whatever app Windows has
 associated with `.yaml` files, for you to hand-edit:
 
-- `hotkey` — the global shortcut, e.g. `win+a` or `ctrl+alt+f9`; defaults
-  to `win+a` if left blank. Switching to a bad or unregistrable value keeps
-  whatever hotkey was already working active instead of leaving you with
-  none.
+- `hotkey` — the global shortcut, e.g. `win+a` or `ctrl+alt+f9`. A config
+  file created from scratch starts out with `win+a`. Leave the value
+  empty, set it to `disabled`, or delete the line to switch the hotkey off
+  entirely — the tray icon and its menu keep working, and the app writes
+  your "off" value back unchanged. Switching to a bad or unregistrable
+  value keeps whatever hotkey was already working active instead of
+  leaving you with none.
 - `poll_seconds` — how often to check this file for hand-edits (and
   re-check devices as a fallback); defaults to `60` if left blank or set to
   `0` or less. Device changes — plugging in, unplugging, or changing the

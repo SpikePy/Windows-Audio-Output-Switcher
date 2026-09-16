@@ -145,14 +145,22 @@ func (a *app) reloadConfigIfChanged() {
 	a.configErr = nil
 	a.cfgMu.Unlock()
 
-	if newCombo := loaded.EffectiveHotkey(); newCombo != a.currentHotkey() {
-		if err := a.applyHotkey(newCombo); err != nil {
-			log.Printf("failed to apply new hotkey %q: %v", newCombo, err)
-			osd.Show(fmt.Sprintf("Could not use hotkey %s: %v", newCombo, err))
-		} else {
-			osd.Show("Hotkey set to " + newCombo)
-		}
+	newCombo := loaded.EffectiveHotkey()
+	if newCombo == a.currentHotkey() {
+		return
 	}
+	if !outputconfig.HotkeyEnabled(newCombo) {
+		a.disableHotkey(newCombo)
+		log.Print("hotkey switched off in the config file")
+		osd.Show("Hotkey switched off")
+		return
+	}
+	if err := a.applyHotkey(newCombo); err != nil {
+		log.Printf("failed to apply new hotkey %q: %v", newCombo, err)
+		osd.Show(fmt.Sprintf("Could not use hotkey %s: %v", newCombo, err))
+		return
+	}
+	osd.Show("Hotkey set to " + newCombo)
 }
 
 func (a *app) devices() map[string]outputconfig.Entry {

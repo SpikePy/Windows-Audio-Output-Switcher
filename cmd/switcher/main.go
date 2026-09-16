@@ -31,8 +31,10 @@ type app struct {
 
 	// hk and hotkeyCombo are the currently-registered global hotkey and
 	// the combo string (see internal/hotkeycfg) it was built from -
-	// outputconfig.DefaultHotkey ("win+a") if never customized in the
-	// config file. Always changed together via applyHotkey.
+	// outputconfig.DefaultHotkey ("win+a") if there's no config file yet.
+	// hk is nil, and hotkeyCombo empty or "disabled", when the config file
+	// switched the hotkey off. Always changed together, via applyHotkey or
+	// disableHotkey.
 	hk          *llhotkey.Hotkey
 	hotkeyCombo string
 	hotkeyMu    sync.Mutex

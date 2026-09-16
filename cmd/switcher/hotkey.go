@@ -9,12 +9,18 @@ import (
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/osd"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 )
 
 // registerHotkey registers a.hotkeyCombo, as loaded from the config file
-// at startup (see main).
+// at startup (see main), unless the file switched the hotkey off.
 func (a *app) registerHotkey() {
 	combo := a.currentHotkey()
+	if !outputconfig.HotkeyEnabled(combo) {
+		log.Print("hotkey is switched off in the config file")
+		return
+	}
+
 	if err := a.applyHotkey(combo); err != nil {
 		log.Printf("failed to register hotkey %q: %v", combo, err)
 		osd.Show(fmt.Sprintf("Could not register the switch hotkey (%s): %v", combo, err))
@@ -48,6 +54,21 @@ func (a *app) applyHotkey(combo string) error {
 
 	go a.handleHotkey(newHk)
 	return nil
+}
+
+// disableHotkey unregisters the active hotkey, if any. combo is the
+// file's own way of switching it off (empty, or "disabled"), remembered
+// as-is so syncConfig writes that same value back.
+func (a *app) disableHotkey(combo string) {
+	a.hotkeyMu.Lock()
+	oldHk := a.hk
+	a.hk = nil
+	a.hotkeyCombo = combo
+	a.hotkeyMu.Unlock()
+
+	if oldHk != nil {
+		llhotkey.Unregister(oldHk)
+	}
 }
 
 func (a *app) handleHotkey(hk *llhotkey.Hotkey) {

@@ -76,13 +76,24 @@ type file struct {
 	Outputs     []Entry `yaml:"outputs"`
 }
 
-// DefaultHotkey is used whenever the config file has no (or an empty)
-// hotkey set - a fresh install, or a hand-edit that cleared it.
+// DefaultHotkey is what a config file that doesn't exist yet gets, so a
+// fresh install cycles outputs out of the box.
 const DefaultHotkey = "win+a"
+
+// HotkeyDisabled turns the global hotkey off when the config file's hotkey
+// is set to it; an empty value, or no hotkey line at all, does the same.
+const HotkeyDisabled = "disabled"
 
 // DefaultPollSeconds is used whenever the config file has no (or a
 // non-positive) poll_seconds set.
 const DefaultPollSeconds = 60
+
+// HotkeyEnabled reports whether combo asks for a hotkey at all - that is,
+// whether it's neither empty nor HotkeyDisabled.
+func HotkeyEnabled(combo string) bool {
+	trimmed := strings.TrimSpace(combo)
+	return trimmed != "" && !strings.EqualFold(trimmed, HotkeyDisabled)
+}
 
 const header = `# Audio Output Switcher - configuration
 #
@@ -90,8 +101,11 @@ const header = `# Audio Output Switcher - configuration
 #          internal/hotkeycfg: at least one modifier (ctrl, alt, shift,
 #          win) plus a key (a letter, digit, F1-F20, or one of space,
 #          return/enter, escape/esc, delete/del, tab, left, right, up,
-#          down), joined with "+" - e.g. "ctrl+alt+f9". Defaults to
-#          "win+a" if left blank.
+#          down), joined with "+" - e.g. "ctrl+alt+f9". Leave it empty,
+#          set it to "disabled", or delete the line to switch the hotkey
+#          off entirely; the tray icon and its menu keep working either
+#          way. A config file created from scratch starts out with
+#          "win+a".
 #
 # poll_seconds - how often, in seconds, to check this file for hand-edits
 #                (and re-check devices as a fallback - device changes are
@@ -134,8 +148,12 @@ func Path() string {
 
 // Config is everything Load reads back from the config file.
 type Config struct {
-	// Hotkey is the raw value saved in the file, which may be empty
-	// (nothing customized yet) - see EffectiveHotkey.
+	// Exists is false when there's no readable config file yet, which is
+	// what tells a fresh install apart from a file whose hotkey was
+	// deliberately emptied out - see EffectiveHotkey.
+	Exists bool
+	// Hotkey is the raw value saved in the file, which may be empty or
+	// HotkeyDisabled - see EffectiveHotkey and HotkeyEnabled.
 	Hotkey string
 	// PollSeconds is the raw value saved in the file, which may be
 	// non-positive (nothing customized yet) - see EffectivePollInterval.
@@ -144,9 +162,12 @@ type Config struct {
 	Devices map[string]Entry
 }
 
-// EffectiveHotkey returns c.Hotkey, or DefaultHotkey if it's empty.
+// EffectiveHotkey returns the hotkey value to act on: whatever the file
+// says - including an empty one, which means the hotkey is switched off -
+// or DefaultHotkey when there's no config file yet. Check the result with
+// HotkeyEnabled before trying to register it.
 func (c Config) EffectiveHotkey() string {
-	if c.Hotkey == "" {
+	if !c.Exists {
 		return DefaultHotkey
 	}
 	return c.Hotkey
@@ -187,7 +208,7 @@ func Load() (Config, error) {
 			entries[e.ID] = e
 		}
 	}
-	return Config{Hotkey: f.Hotkey, PollSeconds: f.PollSeconds, Devices: entries}, nil
+	return Config{Exists: true, Hotkey: f.Hotkey, PollSeconds: f.PollSeconds, Devices: entries}, nil
 }
 
 // Sync writes the config file with hotkey, pollSeconds, an entry for every

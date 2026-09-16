@@ -39,6 +39,9 @@ func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
+	if c.Exists {
+		t.Error("Exists = true, want false without a config file")
+	}
 	if len(c.Devices) != 0 {
 		t.Errorf("Devices = %v, want none", c.Devices)
 	}
@@ -91,22 +94,74 @@ func TestLoadKeepsOnlyTheDateOfATimestamp(t *testing.T) {
 	}
 }
 
-func TestEffectiveSettings(t *testing.T) {
+func TestHotkeyEnabled(t *testing.T) {
+	tests := map[string]bool{
+		"win+a":       true,
+		"ctrl+alt+f9": true,
+		"":            false,
+		"   ":         false,
+		"disabled":    false,
+		"Disabled":    false,
+		"  DISABLED ": false,
+	}
+	for combo, want := range tests {
+		if got := HotkeyEnabled(combo); got != want {
+			t.Errorf("HotkeyEnabled(%q) = %v, want %v", combo, got, want)
+		}
+	}
+}
+
+func TestEffectiveHotkey(t *testing.T) {
 	tests := []struct {
-		cfg        Config
-		wantHotkey string
-		wantPoll   time.Duration
+		name        string
+		cfg         Config
+		want        string
+		wantEnabled bool
 	}{
-		{Config{}, DefaultHotkey, DefaultPollSeconds * time.Second},
-		{Config{Hotkey: "ctrl+alt+f9", PollSeconds: 15}, "ctrl+alt+f9", 15 * time.Second},
-		{Config{PollSeconds: -3}, DefaultHotkey, DefaultPollSeconds * time.Second},
+		{"no config file yet", Config{}, DefaultHotkey, true},
+		{"custom hotkey", Config{Exists: true, Hotkey: "ctrl+alt+f9"}, "ctrl+alt+f9", true},
+		{"emptied out", Config{Exists: true}, "", false},
+		{"switched off by name", Config{Exists: true, Hotkey: HotkeyDisabled}, HotkeyDisabled, false},
 	}
 	for _, tt := range tests {
-		if got := tt.cfg.EffectiveHotkey(); got != tt.wantHotkey {
-			t.Errorf("%+v.EffectiveHotkey() = %q, want %q", tt.cfg, got, tt.wantHotkey)
+		got := tt.cfg.EffectiveHotkey()
+		if got != tt.want {
+			t.Errorf("%s: EffectiveHotkey() = %q, want %q", tt.name, got, tt.want)
 		}
-		if got := tt.cfg.EffectivePollInterval(); got != tt.wantPoll {
-			t.Errorf("%+v.EffectivePollInterval() = %v, want %v", tt.cfg, got, tt.wantPoll)
+		if enabled := HotkeyEnabled(got); enabled != tt.wantEnabled {
+			t.Errorf("%s: HotkeyEnabled(%q) = %v, want %v", tt.name, got, enabled, tt.wantEnabled)
+		}
+	}
+}
+
+func TestLoadTreatsAMissingHotkeyLineAsOff(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, "poll_seconds: 30\noutputs:\n  - id: dev-1\n    alias: Desk\n")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Exists {
+		t.Fatal("Exists = false, want true for a file that parsed")
+	}
+	if got := c.EffectiveHotkey(); HotkeyEnabled(got) {
+		t.Errorf("EffectiveHotkey() = %q, want a value that switches the hotkey off", got)
+	}
+}
+
+func TestEffectivePollInterval(t *testing.T) {
+	tests := []struct {
+		cfg  Config
+		want time.Duration
+	}{
+		{Config{}, DefaultPollSeconds * time.Second},
+		{Config{PollSeconds: 15}, 15 * time.Second},
+		{Config{PollSeconds: -3}, DefaultPollSeconds * time.Second},
+	}
+	for _, tt := range tests {
+		if got := tt.cfg.EffectivePollInterval(); got != tt.want {
+			t.Errorf("%+v.EffectivePollInterval() = %v, want %v", tt.cfg, got, tt.want)
 		}
 	}
 }
@@ -146,6 +201,26 @@ func TestSyncRoundTrip(t *testing.T) {
 	}
 	if _, err := os.Stat(Path() + ".tmp"); !os.IsNotExist(err) {
 		t.Errorf("temporary file left behind: %v", err)
+	}
+}
+
+func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
+	withTempAppData(t)
+
+	for _, off := range []string{"", HotkeyDisabled} {
+		if _, err := Sync(off, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Hotkey != off {
+			t.Errorf("reloaded hotkey = %q, want %q written back unchanged", loaded.Hotkey, off)
+		}
+		if got := loaded.EffectiveHotkey(); HotkeyEnabled(got) {
+			t.Errorf("reloaded %q counts as an enabled hotkey", got)
+		}
 	}
 }
 
