@@ -18,6 +18,13 @@ import (
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
 
+// How long removals keep trying, which only matters for files a process
+// that was just killed hasn't let go of yet - two seconds in total.
+const (
+	removeAttempts   = 10
+	removeRetryDelay = 200 * time.Millisecond
+)
+
 // Install downloads the latest release and, if it differs from the copy
 // in the current user's Startup folder, puts it there under a fixed name
 // and (re)starts it. Calling it again later updates in place: the fixed
@@ -66,13 +73,13 @@ func Install() error {
 	// the same fixed name is what keeps there from ever being more than
 	// one Startup folder entry.
 	oldPath := exePath + ".old"
-	_ = os.Remove(oldPath)
+	_ = removeWithRetry(oldPath)
 	_ = os.Rename(exePath, oldPath)
 	if err := os.Rename(downloaded, exePath); err != nil {
 		_ = os.Rename(oldPath, exePath) // best-effort rollback
 		return fmt.Errorf("replace %s: %w", exePath, err)
 	}
-	_ = os.Remove(oldPath)
+	_ = removeWithRetry(oldPath)
 	_ = os.Remove(updater.LegacyVersionFilePath())
 
 	fmt.Println("Starting Audio Output Switcher...")
@@ -172,7 +179,23 @@ func removeAll(path string) {
 	if path == "" {
 		return
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := removeWithRetry(path); err != nil {
 		fmt.Printf("warning: could not remove %s: %v\n", path, err)
 	}
+}
+
+// removeWithRetry deletes a file or directory, retrying briefly while
+// Windows refuses. A process that was just killed holds on to its exe
+// for a moment longer, and deleting it in that window fails - which
+// would leave a copy of the previous version sitting in the Startup
+// folder until the next update.
+func removeWithRetry(path string) error {
+	var err error
+	for attempt := 0; attempt < removeAttempts; attempt++ {
+		if err = os.RemoveAll(path); err == nil {
+			return nil
+		}
+		time.Sleep(removeRetryDelay)
+	}
+	return err
 }
