@@ -31,7 +31,7 @@ type app struct {
 
 	// hk and hotkeyCombo are the currently-registered global hotkey and
 	// the combo string (see internal/hotkeycfg) it was built from -
-	// outputconfig.DefaultHotkey ("win+s") if never customized in the
+	// outputconfig.DefaultHotkey ("win+a") if never customized in the
 	// config file. Always changed together via applyHotkey.
 	hk          *llhotkey.Hotkey
 	hotkeyCombo string

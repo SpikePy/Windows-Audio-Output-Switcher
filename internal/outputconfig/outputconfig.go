@@ -78,7 +78,7 @@ type file struct {
 
 // DefaultHotkey is used whenever the config file has no (or an empty)
 // hotkey set - a fresh install, or a hand-edit that cleared it.
-const DefaultHotkey = "win+s"
+const DefaultHotkey = "win+a"
 
 // DefaultPollSeconds is used whenever the config file has no (or a
 // non-positive) poll_seconds set.
@@ -91,7 +91,7 @@ const header = `# Audio Output Switcher - configuration
 #          win) plus a key (a letter, digit, F1-F20, or one of space,
 #          return/enter, escape/esc, delete/del, tab, left, right, up,
 #          down), joined with "+" - e.g. "ctrl+alt+f9". Defaults to
-#          "win+s" if left blank.
+#          "win+a" if left blank.
 #
 # poll_seconds - how often, in seconds, to check this file for hand-edits
 #                (and re-check devices as a fallback - device changes are

@@ -9,15 +9,15 @@ rights required, and nothing running except while you're logged in.
 
 ## What it does
 
-- **Cycles the default playback device.** Press **Win+S** (the default
+- **Cycles the default playback device.** Press **Win+A** (the default
   hotkey, changeable), left-click the tray icon, or pick a device from the
   right-click menu, and Windows' default audio output moves to the next
   active playback device in the list, wrapping back to the first one after
   the last. It takes effect for every application immediately — the same as
   changing it by hand in the Windows sound settings.
-- **`Win+S` actually works for this**, even though Windows normally
-  reserves it for Search (same goes for any other reserved combo you
-  configure it to instead). See
+- **`Win+A` actually works for this**, even though Windows normally
+  reserves it for Quick Settings (same goes for any other reserved combo
+  you configure it to instead). See
   [how](DETAILS.md#binding-win-shortcuts).
 - **Shows an on-screen overlay on every switch** — styled after Windows'
   own volume/brightness OSD, not a toast notification — naming the device

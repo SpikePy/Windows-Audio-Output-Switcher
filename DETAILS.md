@@ -10,8 +10,8 @@ Windows parts actually work.
 `%APPDATA%\AudioOutputSwitcher\devices.yaml` in whatever app Windows has
 associated with `.yaml` files, for you to hand-edit:
 
-- `hotkey` — the global shortcut, e.g. `win+s` or `ctrl+alt+f9`; defaults
-  to `win+s` if left blank. Switching to a bad or unregistrable value keeps
+- `hotkey` — the global shortcut, e.g. `win+a` or `ctrl+alt+f9`; defaults
+  to `win+a` if left blank. Switching to a bad or unregistrable value keeps
   whatever hotkey was already working active instead of leaving you with
   none.
 - `poll_seconds` — how often to check this file for hand-edits (and
@@ -85,7 +85,7 @@ Instead, [`internal/llhotkey`](internal/llhotkey) installs a low-level
 keyboard hook (`WH_KEYBOARD_LL`), which runs earlier in the input pipeline
 than the shell's shortcut handling. When the configured combo is detected,
 the hook consumes the keystroke — rather than passing it on — which is what
-stops Search from also opening. This is the same technique tools like
+stops Quick Settings from also opening. This is the same technique tools like
 AutoHotkey use to remap `Win+<key>` shortcuts.
 
 **Trade-off:** a global low-level keyboard hook sees every keystroke typed
