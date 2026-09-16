@@ -3,7 +3,7 @@
 // Package install implements installing/updating and uninstalling Audio
 // Output Switcher, shared by cmd/setup. Kept separate from cmd/setup so
 // the logic itself - the part worth getting right - isn't entangled
-// with the interactive menu around it.
+// with the window around it.
 package install
 
 import (
@@ -69,7 +69,7 @@ func Install(progress Progress) error {
 		migrate(progress)
 		if !updater.IsRunning() {
 			progress("Starting Audio Output Switcher...")
-			_ = exec.Command(exePath).Start()
+			_ = start(exePath)
 		}
 		progress(fmt.Sprintf("%s is already installed. %s", release.TagName, applyAutostart(exePath, progress)))
 		return nil
@@ -95,12 +95,21 @@ func Install(progress Progress) error {
 	migrate(progress)
 
 	progress("Starting Audio Output Switcher...")
-	if err := exec.Command(exePath).Start(); err != nil {
+	if err := start(exePath); err != nil {
 		return fmt.Errorf("start %s: %w", exePath, err)
 	}
 
 	progress(fmt.Sprintf("%s is installed and running. %s", release.TagName, applyAutostart(exePath, progress)))
 	return nil
+}
+
+// start launches the installed app from its own folder. Otherwise it
+// would inherit setup's working directory - typically Downloads - and
+// keep that folder in use for as long as it runs.
+func start(exePath string) error {
+	cmd := exec.Command(exePath)
+	cmd.Dir = filepath.Dir(exePath)
+	return cmd.Start()
 }
 
 // applyAutostart creates or removes the Startup folder shortcut to exePath
