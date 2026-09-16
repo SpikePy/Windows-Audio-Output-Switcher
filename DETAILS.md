@@ -7,7 +7,7 @@ Windows parts actually work.
 ## Configuration
 
 *Configure* in the tray menu opens
-`%APPDATA%\AudioOutputSwitcher\devices.yaml` in whatever app Windows has
+`%APPDATA%\AudioOutputSwitcher\config.yaml` in whatever app Windows has
 associated with `.yaml` files, for you to hand-edit:
 
 - `hotkey` — the global shortcut, e.g. `win+a` or `ctrl+alt+f9`. A config
@@ -109,7 +109,7 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
-| `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `devices.yaml` |
+| `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `config.yaml` |
 | `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
 | `internal/updater`       | GitHub release lookup/download over WinHTTP, for `internal/install` |
 | `assets/icons`           | Embedded tray/exe icon                                           |

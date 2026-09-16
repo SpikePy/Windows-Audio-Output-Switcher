@@ -68,9 +68,14 @@ func Install() error {
 	}
 	_ = os.Remove(oldPath)
 
+	if err := os.MkdirAll(filepath.Dir(updater.VersionFilePath()), 0o755); err != nil {
+		return fmt.Errorf("create config folder: %w", err)
+	}
 	if err := os.WriteFile(updater.VersionFilePath(), []byte(release.TagName), 0o644); err != nil {
 		return fmt.Errorf("write version marker: %w", err)
 	}
+	// Versions up to v1.0.4 kept this marker in the Startup folder itself.
+	_ = os.Remove(updater.LegacyVersionFilePath())
 
 	fmt.Println("Starting Audio Output Switcher...")
 	if err := exec.Command(exePath).Start(); err != nil {
@@ -82,11 +87,11 @@ func Install() error {
 }
 
 // Uninstall stops Audio Output Switcher and removes everything Install
-// set up - the Startup folder entry, its saved device config, and a
-// legacy Start Menu shortcut from versions old enough to have created
-// one - leaving no trace behind. It does not touch the setup tool
-// itself; the caller is responsible for that (see cmd/setup, which
-// self-deletes after a successful uninstall).
+// set up - the Startup folder entry, its saved config, and a legacy Start
+// Menu shortcut from versions old enough to have created one - leaving no
+// trace behind. It does not touch the setup tool itself; the caller is
+// responsible for that (see cmd/setup, which self-deletes after a
+// successful uninstall).
 func Uninstall() error {
 	fmt.Println("Stopping Audio Output Switcher...")
 	updater.KillRunning()
@@ -94,11 +99,12 @@ func Uninstall() error {
 
 	removeAll(updater.InstalledExePath())
 	removeAll(updater.InstalledExePath() + ".old")
-	removeAll(updater.VersionFilePath())
+	removeAll(updater.LegacyVersionFilePath())
 	removeAll(legacyShortcutPath())
-	// Everything under here - devices.yaml/outputs.yaml, and (up to
-	// v0.9.3) config.json - lives in this one directory, so removing it
-	// wholesale covers every version's settings file in one go.
+	// Everything under here - config.yaml (devices.yaml/outputs.yaml in
+	// older versions), the version marker, and (up to v0.9.3) config.json
+	// - lives in this one directory, so removing it wholesale covers
+	// every version's settings in one go.
 	removeAll(filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher"))
 
 	fmt.Println("Audio Output Switcher has been removed.")

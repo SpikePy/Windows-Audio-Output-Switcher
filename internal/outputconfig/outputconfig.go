@@ -135,15 +135,19 @@ const header = `# Audio Output Switcher - configuration
 
 `
 
-// fileName is deliberately not "outputs.yaml" (its name before the
-// alias field existed) - "devices.yaml" better reflects that it holds
-// per-device settings in general, not just which outputs to skip.
-const fileName = "devices.yaml"
+const fileName = "config.yaml"
+
+// Dir returns the folder holding everything this app keeps in the user's
+// profile - the config file, and the installed-version marker setup
+// writes next to it: %APPDATA%\AudioOutputSwitcher.
+func Dir() string {
+	return filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher")
+}
 
 // Path returns where the config file lives:
-// %APPDATA%\AudioOutputSwitcher\devices.yaml.
+// %APPDATA%\AudioOutputSwitcher\config.yaml.
 func Path() string {
-	return filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher", fileName)
+	return filepath.Join(Dir(), fileName)
 }
 
 // Config is everything Load reads back from the config file.

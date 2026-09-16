@@ -29,7 +29,7 @@ rights required, and nothing running except while you're logged in.
   - **Right-click** opens a menu listing every currently active output
     device — click one to switch to it directly (the active one is
     checked) — followed by *Configure* and *Exit*.
-- **Configure** opens `%APPDATA%\AudioOutputSwitcher\devices.yaml` in
+- **Configure** opens `%APPDATA%\AudioOutputSwitcher\config.yaml` in
   whatever app Windows has associated with `.yaml` files. There you can
   rename a device (`alias`), leave one out of the cycling (`skip`), and
   change the `hotkey` — or switch it off entirely, leaving the tray icon
