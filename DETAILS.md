@@ -17,6 +17,12 @@ associated with `.yaml` files, for you to hand-edit:
   your "off" value back unchanged. Switching to a bad or unregistrable
   value keeps whatever hotkey was already working active instead of
   leaving you with none.
+- `autostart` — `true` (the default, also when left blank) keeps a
+  shortcut to the installed exe in your Startup folder so the app starts
+  at login; `false` removes it. The app applies this every time it starts
+  and whenever you save the file, and setup does the same on install. The
+  exe itself always lives in `%APPDATA%\AudioOutputSwitcher`, never in the
+  Startup folder.
 - `poll_seconds` — how often to check this file for hand-edits (and
   re-check devices as a fallback); defaults to `60` if left blank or set to
   `0` or less. Device changes — plugging in, unplugging, or changing the
@@ -110,6 +116,7 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
 | `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `config.yaml` |
+| `internal/autostart`     | Keeps the Startup folder shortcut in line with `autostart`       |
 | `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
 | `internal/updater`       | GitHub release lookup/download over WinHTTP, for `internal/install` |
 | `assets/icons`           | Embedded tray/exe icon                                           |

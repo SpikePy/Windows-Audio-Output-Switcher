@@ -1,5 +1,5 @@
 // Package outputconfig persists the app's hand-editable settings - the
-// switch hotkey, the poll interval, and per-device settings (whether a
+// switch hotkey, whether to start at login, the poll interval, and per-device settings (whether a
 // device is skipped when cycling outputs, and the alias shown for it) -
 // in a YAML file under the current user's profile. Devices are keyed by
 // their Windows endpoint ID, so renaming a device, or having two with the
@@ -72,6 +72,7 @@ func DisplayName(entries map[string]Entry, id, windowsName string) string {
 
 type file struct {
 	Hotkey      string  `yaml:"hotkey"`
+	Autostart   *bool   `yaml:"autostart"`
 	PollSeconds int     `yaml:"poll_seconds"`
 	Outputs     []Entry `yaml:"outputs"`
 }
@@ -107,6 +108,10 @@ const header = `# Audio Output Switcher - configuration
 #          way. A config file created from scratch starts out with
 #          "win+a".
 #
+# autostart - true to start the app automatically at login (a shortcut in
+#             your Startup folder), false to not. Defaults to true if
+#             left blank.
+#
 # poll_seconds - how often, in seconds, to check this file for hand-edits
 #                (and re-check devices as a fallback - device changes are
 #                normally picked up instantly). Defaults to 60 if left
@@ -138,8 +143,8 @@ const header = `# Audio Output Switcher - configuration
 const fileName = "config.yaml"
 
 // Dir returns the folder holding everything this app keeps in the user's
-// profile - the config file, and the installed-version marker setup
-// writes next to it: %APPDATA%\AudioOutputSwitcher.
+// profile - the config file, and the installed exe next to it:
+// %APPDATA%\AudioOutputSwitcher.
 func Dir() string {
 	return filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher")
 }
@@ -159,6 +164,9 @@ type Config struct {
 	// Hotkey is the raw value saved in the file, which may be empty or
 	// HotkeyDisabled - see EffectiveHotkey and HotkeyEnabled.
 	Hotkey string
+	// Autostart is the raw value saved in the file, nil if it has none -
+	// see EffectiveAutostart.
+	Autostart *bool
 	// PollSeconds is the raw value saved in the file, which may be
 	// non-positive (nothing customized yet) - see EffectivePollInterval.
 	PollSeconds int
@@ -175,6 +183,13 @@ func (c Config) EffectiveHotkey() string {
 		return DefaultHotkey
 	}
 	return c.Hotkey
+}
+
+// EffectiveAutostart reports whether the app should start at login: what
+// the file says, or true if it doesn't say (including when there's no
+// config file yet).
+func (c Config) EffectiveAutostart() bool {
+	return c.Autostart == nil || *c.Autostart
 }
 
 // EffectivePollInterval returns c.PollSeconds as a Duration, or
@@ -212,16 +227,16 @@ func Load() (Config, error) {
 			entries[e.ID] = e
 		}
 	}
-	return Config{Exists: true, Hotkey: f.Hotkey, PollSeconds: f.PollSeconds, Devices: entries}, nil
+	return Config{Exists: true, Hotkey: f.Hotkey, Autostart: f.Autostart, PollSeconds: f.PollSeconds, Devices: entries}, nil
 }
 
-// Sync writes the config file with hotkey, pollSeconds, an entry for every
+// Sync writes the config file with hotkey, autostart, pollSeconds, an entry for every
 // device in active - with today's date as LastSeen, and given the device's
 // Windows name as its alias if it has none yet - and every entry in
 // current for a device that isn't active, unchanged. Entries are never
 // dropped; only a hand-edit removes one. It returns the device entries as
 // written, keyed by ID.
-func Sync(hotkey string, pollSeconds int, active []Device, current map[string]Entry) (map[string]Entry, error) {
+func Sync(hotkey string, autostart bool, pollSeconds int, active []Device, current map[string]Entry) (map[string]Entry, error) {
 	today := dateOf(time.Now())
 
 	result := make(map[string]Entry, len(current)+len(active))
@@ -251,7 +266,7 @@ func Sync(hotkey string, pollSeconds int, active []Device, current map[string]En
 		return entries[i].ID < entries[j].ID
 	})
 
-	data, err := yaml.Marshal(file{Hotkey: hotkey, PollSeconds: pollSeconds, Outputs: entries})
+	data, err := yaml.Marshal(file{Hotkey: hotkey, Autostart: &autostart, PollSeconds: pollSeconds, Outputs: entries})
 	if err != nil {
 		return nil, err
 	}

@@ -150,6 +150,38 @@ func TestLoadTreatsAMissingHotkeyLineAsOff(t *testing.T) {
 	}
 }
 
+func TestEffectiveAutostart(t *testing.T) {
+	off, on := false, true
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"no config file yet", Config{}, true},
+		{"no autostart line", Config{Exists: true}, true},
+		{"switched on", Config{Exists: true, Autostart: &on}, true},
+		{"switched off", Config{Exists: true, Autostart: &off}, false},
+	}
+	for _, tt := range tests {
+		if got := tt.cfg.EffectiveAutostart(); got != tt.want {
+			t.Errorf("%s: EffectiveAutostart() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestLoadReadsAutostart(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, "hotkey: win+a\nautostart: false\n")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EffectiveAutostart() {
+		t.Error("EffectiveAutostart() = true, want false as written in the file")
+	}
+}
+
 func TestEffectivePollInterval(t *testing.T) {
 	tests := []struct {
 		cfg  Config
@@ -170,7 +202,7 @@ func TestSyncRoundTrip(t *testing.T) {
 	withTempAppData(t)
 
 	active := []Device{{ID: "dev-1", Name: "Speakers"}, {ID: "dev-2", Name: "Headphones"}}
-	written, err := Sync("ctrl+alt+f9", 15, active, nil)
+	written, err := Sync("ctrl+alt+f9", false, 15, active, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +210,9 @@ func TestSyncRoundTrip(t *testing.T) {
 	loaded, err := Load()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if loaded.EffectiveAutostart() {
+		t.Error("reloaded autostart = true, want the false that was written")
 	}
 	if loaded.Hotkey != "ctrl+alt+f9" || loaded.PollSeconds != 15 {
 		t.Errorf("reloaded hotkey/poll = %q/%d, want %q/%d", loaded.Hotkey, loaded.PollSeconds, "ctrl+alt+f9", 15)
@@ -208,7 +243,7 @@ func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
 	withTempAppData(t)
 
 	for _, off := range []string{"", HotkeyDisabled} {
-		if _, err := Sync(off, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+		if _, err := Sync(off, true, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 			t.Fatal(err)
 		}
 		loaded, err := Load()
@@ -226,7 +261,7 @@ func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
 
 func TestSyncWritesLastSeenAsADate(t *testing.T) {
 	withTempAppData(t)
-	if _, err := Sync("", 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+	if _, err := Sync("", true, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -243,7 +278,7 @@ func TestSyncAddsNewDevicesAndKeepsDisconnectedOnes(t *testing.T) {
 		"old": {ID: "old", Alias: "Living room", Skip: true, LastSeen: past},
 	}
 
-	got, err := Sync("", 0, []Device{{ID: "new", Name: "Headset"}}, current)
+	got, err := Sync("", true, 0, []Device{{ID: "new", Name: "Headset"}}, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +300,7 @@ func TestSyncKeepsSameNamedDevicesApart(t *testing.T) {
 	current := map[string]Entry{"a": {ID: "a", Alias: "Front", Skip: true}}
 	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Speakers"}}
 
-	got, err := Sync("", 0, active, current)
+	got, err := Sync("", true, 0, active, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +317,7 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 	current := map[string]Entry{"a": {Alias: "Desk"}, "b": {}}
 	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Headset"}}
 
-	got, err := Sync("", 0, active, current)
+	got, err := Sync("", true, 0, active, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +328,7 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 
 func TestSyncWritesEntryKeysInOrder(t *testing.T) {
 	withTempAppData(t)
-	if _, err := Sync("", 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+	if _, err := Sync("", true, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 

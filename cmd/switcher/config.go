@@ -63,7 +63,7 @@ func openInDefaultApp(path string) error {
 // syncConfig writes the config file via outputconfig.Sync (adding any
 // device in devices it doesn't already have an entry for, refreshing
 // LastSeen for all of them, and never dropping an entry for a device that
-// isn't in devices, or touching the saved hotkey/poll interval), and
+// isn't in devices, or touching the saved hotkey/autostart/poll interval), and
 // updates a.cfg/a.configModTime to match. It first picks up any edit made
 // since the file was last read, so it never writes over one - and refuses
 // to write at all while the file on disk fails to parse.
@@ -71,13 +71,13 @@ func (a *app) syncConfig(devices []audio.Device) (map[string]outputconfig.Entry,
 	a.reloadConfigIfChanged()
 
 	a.cfgMu.Lock()
-	cfg, pollInterval, configErr := a.cfg, a.pollInterval, a.configErr
+	cfg, autostart, pollInterval, configErr := a.cfg, a.autostart, a.pollInterval, a.configErr
 	a.cfgMu.Unlock()
 	if configErr != nil {
 		return nil, errConfigInvalid
 	}
 
-	merged, err := outputconfig.Sync(a.currentHotkey(), int(pollInterval/time.Second), toConfigDevices(devices), cfg)
+	merged, err := outputconfig.Sync(a.currentHotkey(), autostart, int(pollInterval/time.Second), toConfigDevices(devices), cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +111,8 @@ func hasNewDevice(devices []audio.Device, cfg map[string]outputconfig.Entry) boo
 
 // reloadConfigIfChanged picks up an edit made outside the app (i.e. in
 // whatever editor openConfigFile opened) by comparing the config file's
-// mtime against the last time it was read - device settings, the poll
-// interval, and the hotkey if it changed to something that still parses
+// mtime against the last time it was read - device settings, autostart,
+// the poll interval, and the hotkey if it changed to something that still parses
 // and registers. If the edit left the file unparseable, the previous
 // settings stay in effect and the user is told.
 func (a *app) reloadConfigIfChanged() {
@@ -141,9 +141,18 @@ func (a *app) reloadConfigIfChanged() {
 
 	a.cfgMu.Lock()
 	a.cfg = loaded.Devices
+	autostartChanged := a.autostart != loaded.EffectiveAutostart()
+	a.autostart = loaded.EffectiveAutostart()
 	a.pollInterval = loaded.EffectivePollInterval()
+	// Apply autostart after an invalid file, too: the startup check
+	// skipped it then.
+	wasInvalid := a.configErr != nil
 	a.configErr = nil
 	a.cfgMu.Unlock()
+
+	if autostartChanged || wasInvalid {
+		applyAutostart(loaded.EffectiveAutostart())
+	}
 
 	newCombo := loaded.EffectiveHotkey()
 	if newCombo == a.currentHotkey() {

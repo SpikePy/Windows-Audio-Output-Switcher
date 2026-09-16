@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,9 +18,11 @@ import (
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/assets/icons"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/autostart"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/osd"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
 
 // version is set via -ldflags "-X main.version=..." during the release
@@ -55,6 +58,7 @@ type app struct {
 	// device ID) is always replaced wholesale, never mutated, so a map read
 	// under cfgMu stays safe to use after unlocking.
 	cfg           map[string]outputconfig.Entry
+	autostart     bool          // whether the Startup folder shortcut should exist
 	pollInterval  time.Duration // how often to re-check the config file (and devices, as a fallback)
 	configModTime time.Time     // file mtime as of the last read or write - see reloadConfigIfChanged
 	configErr     error         // non-nil while the file on disk fails to parse
@@ -89,9 +93,33 @@ func main() {
 		configModTime: outputconfig.ModTime(),
 		configErr:     err,
 		hotkeyCombo:   loaded.EffectiveHotkey(),
+		autostart:     loaded.EffectiveAutostart(),
 		pollInterval:  loaded.EffectivePollInterval(),
 	}
+	if err == nil {
+		applyAutostart(a.autostart)
+	}
 	systray.Run(a.onReady, a.onExit)
+}
+
+// applyAutostart creates or removes the Startup folder shortcut as the
+// config file says, so editing autostart takes effect without re-running
+// setup. Only the installed copy does this - a build run from anywhere
+// else must not point the shortcut at itself.
+func applyAutostart(enabled bool) {
+	self, err := os.Executable()
+	if err != nil {
+		log.Printf("autostart: locate own exe: %v", err)
+		return
+	}
+	installed := updater.InstalledExePath()
+	if !strings.EqualFold(filepath.Clean(self), filepath.Clean(installed)) {
+		log.Printf("autostart: not the installed copy (%s), leaving the Startup folder alone", self)
+		return
+	}
+	if err := autostart.Set(enabled, installed); err != nil {
+		log.Printf("autostart: %v", err)
+	}
 }
 
 func (a *app) onReady() {

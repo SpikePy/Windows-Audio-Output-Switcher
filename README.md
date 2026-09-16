@@ -31,8 +31,8 @@ rights required, and nothing running except while you're logged in.
     checked) — followed by *Configure* and *Exit*.
 - **Configure** opens `%APPDATA%\AudioOutputSwitcher\config.yaml` in
   whatever app Windows has associated with `.yaml` files. There you can
-  rename a device (`alias`), leave one out of the cycling (`skip`), and
-  change the `hotkey` — or switch it off entirely, leaving the tray icon
+  rename a device (`alias`), leave one out of the cycling (`skip`), turn
+  starting at login off (`autostart`), and change the `hotkey` — or switch it off entirely, leaving the tray icon
   and menu as the only way to switch. Edits are picked up automatically,
   no restart needed. Every field is described in the
   [configuration reference](DETAILS.md#configuration).
@@ -42,12 +42,14 @@ rights required, and nothing running except while you're logged in.
 1. Grab `Setup_AudioOutputSwitcher.exe` from the
    [latest release](../../releases/latest) and run it.
 2. Choose **1) Install or update**. It downloads the newest
-   `AudioOutputSwitcher.exe`, places it in your Startup folder, and starts
-   it immediately — no reboot needed.
+   `AudioOutputSwitcher.exe` into `%APPDATA%\AudioOutputSwitcher`, next to
+   its config, and starts it immediately — no reboot needed. Your Startup
+   folder only gets a shortcut to it, and only while `autostart` is on
+   (the default).
 3. Running setup again at any time re-checks for updates: it downloads the
    latest release and only replaces the installed copy if it actually
    differs. It always deploys under the same fixed filename, so there is
-   only ever a single Startup entry, and nothing else is left lying around
+   only ever a single installed copy, and nothing else is left lying around
    to keep track of versions.
 
 The switcher itself has no window; look for its icon in the system tray
@@ -56,8 +58,8 @@ The switcher itself has no window; look for its icon in the system tray
 ## Uninstalling
 
 Run `Setup_AudioOutputSwitcher.exe` again and choose **2) Uninstall**. It
-stops the running app, removes it from the Startup folder along with its
-saved device config, and finally removes itself — nothing is left behind.
+stops the running app, removes it and its config along with the Startup
+folder shortcut, and finally removes itself — nothing is left behind.
 
 ## Something not working?
 
