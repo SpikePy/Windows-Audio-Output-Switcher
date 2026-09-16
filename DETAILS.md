@@ -1,13 +1,13 @@
 # Details
 
-Everything beyond [the README](README.md): the full configuration
-reference, troubleshooting, building from source, and how the two tricky
+Everything beyond [the README](README.md): the full configuration and
+command-line reference, scripted setup, troubleshooting, building from source, and how the two tricky
 Windows parts actually work.
 
 ## Configuration
 
 *Configure* in the tray menu opens
-`%APPDATA%\AudioOutputSwitcher\config.yaml` in whatever app Windows has
+`%LOCALAPPDATA%\AudioOutputSwitcher\config.yaml` in whatever app Windows has
 associated with `.yaml` files, for you to hand-edit:
 
 - `hotkey` — the global shortcut, e.g. `win+a` or `ctrl+alt+f9`. A config
@@ -21,7 +21,7 @@ associated with `.yaml` files, for you to hand-edit:
   shortcut to the installed exe in your Startup folder so the app starts
   at login; `false` removes it. The app applies this every time it starts
   and whenever you save the file, and setup does the same on install. The
-  exe itself always lives in `%APPDATA%\AudioOutputSwitcher`, never in the
+  exe itself always lives in `%LOCALAPPDATA%\AudioOutputSwitcher`, never in the
   Startup folder.
 - `poll_seconds` — how often to check this file for hand-edits (and
   re-check devices as a fallback); defaults to `60` if left blank or set to
@@ -47,11 +47,40 @@ Edits are picked up automatically, no restart needed. If a save leaves the
 file invalid (e.g. a YAML typo), the app keeps its previous settings, tells
 you so, and won't write to the file until it's fixed.
 
+Up to v1.0.6 the config lived in `%APPDATA%\AudioOutputSwitcher`; setup
+and the app move it over on their own.
+
+## Command line
+
+`AudioOutputSwitcher.exe` takes one flag per setting, which wins over the
+config file for as long as that copy runs (the file itself keeps its own
+values):
+
+| Flag                   | Setting                                                     |
+| ---------------------- | ----------------------------------------------------------- |
+| `-hotkey <combo>`      | `hotkey`, e.g. `-hotkey ctrl+alt+f9` or `-hotkey disabled`  |
+| `-autostart=false`     | `autostart` — also adds/removes the Startup folder shortcut |
+| `-poll-seconds <n>`    | `poll_seconds`                                              |
+| `-enable-logging`      | write `AudioOutputSwitcher.log` next to the exe             |
+
+Only one copy runs at a time: starting a second one while the first is
+still running does nothing.
+
+`Setup_AudioOutputSwitcher.exe` shows its window unless started with
+`-mode install` or `-mode uninstall`, which does that straight away and
+prints its progress to the console it was started from — for scripting.
+It exits with `0` on success and `1` on failure; it doesn't delete itself
+in this mode. Since setup is a GUI program, shells don't wait for it on
+their own: use `start /wait Setup_AudioOutputSwitcher.exe -mode install` in
+`cmd`, or `Start-Process -Wait -NoNewWindow` in PowerShell.
+
 ## Troubleshooting
 
 The switcher has no console window, so if a switch doesn't seem to work,
-check `%TEMP%\AudioOutputSwitcher.log` for details (hotkey registration
-failures, COM errors, etc. are all logged there).
+exit it from the tray and start it again with `-enable-logging`. It then
+writes `AudioOutputSwitcher.log` next to the exe, in
+`%LOCALAPPDATA%\AudioOutputSwitcher` (hotkey registration failures, COM
+errors, etc. are all logged there). Logging is off otherwise.
 
 ## Building from source
 
@@ -59,7 +88,7 @@ Requires Go 1.24+ on Windows (the code is Windows-only):
 
 ```sh
 go build -ldflags "-H=windowsgui" -o AudioOutputSwitcher.exe ./cmd/switcher
-go build -o Setup_AudioOutputSwitcher.exe ./cmd/setup
+go build -ldflags "-H=windowsgui" -o Setup_AudioOutputSwitcher.exe ./cmd/setup
 go test ./...
 ```
 
@@ -71,7 +100,9 @@ Both pipelines run on Windows runners:
 builds, vets and tests every push to `main` and every pull request, and
 [`.github/workflows/release.yml`](.github/workflows/release.yml) — triggered
 by pushing a tag matching `v*.*.*` — builds both binaries, embeds
-`assets/icons/icon.ico` as each `.exe`'s icon resource, and publishes them on
+`assets/icons/icon.ico` as each `.exe`'s icon resource (plus
+`assets/setup.manifest` into setup, for current-looking controls and sharp
+text at any display scaling), and publishes them on
 a new GitHub release.
 
 ## How the switch actually happens
@@ -110,13 +141,14 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | Path                     | Purpose                                                          |
 | ------------------------ | ----------------------------------------------------------------- |
 | `cmd/switcher`           | The tray application                                             |
-| `cmd/setup`              | Interactive install/update/uninstall menu                       |
+| `cmd/setup`              | Setup's install/update/uninstall window and `-mode` flag        |
 | `internal/audio`         | Core Audio API + `IPolicyConfig` bindings, device notifications  |
 | `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
 | `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `config.yaml` |
 | `internal/autostart`     | Keeps the Startup folder shortcut in line with `autostart`       |
+| `internal/setupmenu`     | Setup window's choice/countdown flow, without Win32 (tested)     |
 | `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
 | `internal/updater`       | GitHub release lookup/download over WinHTTP, for `internal/install` |
 | `assets/icons`           | Embedded tray/exe icon                                           |

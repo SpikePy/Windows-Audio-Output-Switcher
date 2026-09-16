@@ -1,19 +1,20 @@
 //go:build windows
 
 // Command setup is the single entry point for installing, updating, and
-// uninstalling Audio Output Switcher - it replaces what used to be two
-// separate Install_/Uninstall_ executables with one that asks which of
-// the two you want.
+// uninstalling Audio Output Switcher. Double-clicked, it shows a small
+// window asking which of the two you want (see window.go); with
+// -mode install|uninstall it does that straight away, for scripting.
 package main
 
 import (
-	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
-	"time"
+	"syscall"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/install"
 )
@@ -22,98 +23,83 @@ import (
 // build; it stays "dev" for local builds.
 var version = "dev"
 
-// autoChoice is what running setup with no input at all - e.g.
-// double-clicked and then left alone - does after autoChoiceDelay: the
-// common case (install/update) rather than doing nothing.
-const (
-	autoChoice      = "1"
-	autoChoiceDelay = 5 * time.Second
+var (
+	kernel32          = windows.NewLazySystemDLL("kernel32.dll")
+	procAttachConsole = kernel32.NewProc("AttachConsole")
 )
 
-// exitDelay is how long the final "done" screen waits for a keypress
-// before closing on its own, so a fully automated run (auto-chosen
-// install included) doesn't need any interaction at all to finish.
-const exitDelay = 3 * time.Second
+const attachParentProcess = ^uintptr(0) // ATTACH_PARENT_PROCESS
 
 func main() {
-	fmt.Println("Audio Output Switcher setup", version)
-	fmt.Println()
-	fmt.Println("1) Install or update Audio Output Switcher")
-	fmt.Println("2) Uninstall Audio Output Switcher")
-	fmt.Println()
+	// Setup is built as a GUI program, so it has no console of its own;
+	// anything it prints on the command line goes to the one it was
+	// started from.
+	if len(os.Args) > 1 {
+		attachConsole()
+	}
+	mode := flag.String("mode", "", "install or uninstall straight away, without showing the window")
+	flag.Parse()
 
-	uninstalled := false
-	label := fmt.Sprintf("Choose an option (1 or 2) - installing/updating automatically in %s if you don't: ", autoChoiceDelay)
-	switch promptWithDefault(label, autoChoice, autoChoiceDelay) {
-	case "1":
-		if err := install.Install(); err != nil {
-			fmt.Fprintln(os.Stderr, "install failed:", err)
+	switch *mode {
+	case "":
+		if runWindow() {
+			// Uninstall doesn't remove this exe itself - do that last,
+			// once the window is gone, so running setup leaves nothing
+			// behind once you've chosen to uninstall.
+			selfDelete()
 		}
-	case "2":
-		if err := install.Uninstall(); err != nil {
-			fmt.Fprintln(os.Stderr, "uninstall failed:", err)
-		} else {
-			uninstalled = true
-		}
+	case "install", "uninstall":
+		os.Exit(runScripted(*mode))
 	default:
-		fmt.Println("Cancelled.")
+		fmt.Fprintf(os.Stderr, "unknown -mode %q, want install or uninstall\n", *mode)
+		os.Exit(2)
+	}
+}
+
+// runScripted runs one action with its progress on the console, and
+// returns the process exit code.
+func runScripted(mode string) int {
+	fmt.Println("Audio Output Switcher setup", version)
+	progress := func(msg string) { fmt.Println(msg) }
+
+	var err error
+	if mode == "install" {
+		err = install.Install(progress)
+	} else {
+		err = install.Uninstall(progress)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s failed: %v\n", mode, err)
+		return 1
+	}
+	return 0
+}
+
+// attachConsole points stdout and stderr at the console of the process
+// that started setup, unless they already lead somewhere usable (a pipe
+// or file it was started with).
+func attachConsole() {
+	if usable(os.Stdout) {
 		return
 	}
-
-	waitOrTimeout(fmt.Sprintf("Press Enter to exit (closing automatically in %s)...", exitDelay), exitDelay)
-
-	if uninstalled {
-		// Uninstall doesn't remove this exe itself - do that here, same
-		// as the old dedicated uninstaller did, so running setup leaves
-		// nothing behind once you've chosen to uninstall. Done last, so
-		// the file isn't gone out from under a user re-reading the
-		// output above before dismissing the prompt.
-		selfDelete()
+	if r, _, _ := procAttachConsole.Call(attachParentProcess); r == 0 {
+		return
+	}
+	if f, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
+		os.Stdout, os.Stderr = f, f
 	}
 }
 
-// readLineWithTimeout prints label, then reads one line of input,
-// trimmed of surrounding whitespace. If nothing arrives within timeout
-// it gives up and reports ok = false instead of waiting forever - this
-// is a console app launched by double-clicking in Explorer as often as
-// from a terminal, and there's nobody at the keyboard to finish a
-// prompt in that case.
-func readLineWithTimeout(label string, timeout time.Duration) (line string, ok bool) {
-	fmt.Print(label)
-
-	lines := make(chan string, 1)
-	go func() {
-		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		lines <- strings.TrimSpace(line)
-	}()
-
-	select {
-	case line := <-lines:
-		return line, true
-	case <-time.After(timeout):
-		return "", false
+func usable(f *os.File) bool {
+	if f == nil {
+		return false
 	}
-}
-
-// promptWithDefault reads one line via readLineWithTimeout, returning
-// def in its place on timeout - e.g. setup double-clicked and left
-// alone defaults to installing/updating rather than sitting there.
-func promptWithDefault(label, def string, timeout time.Duration) string {
-	line, ok := readLineWithTimeout(label, timeout)
-	if !ok {
-		fmt.Println(def)
-		return def
+	h := windows.Handle(f.Fd())
+	if h == 0 || h == windows.InvalidHandle {
+		return false
 	}
-	return line
-}
-
-// waitOrTimeout prints label and blocks until either a keypress or
-// timeout, whichever comes first - used for the final "done" pause so
-// a fully unattended run still closes on its own.
-func waitOrTimeout(label string, timeout time.Duration) {
-	if _, ok := readLineWithTimeout(label, timeout); !ok {
-		fmt.Println()
-	}
+	t, err := windows.GetFileType(h)
+	return err == nil && t != windows.FILE_TYPE_UNKNOWN
 }
 
 // selfDelete spawns a detached helper that waits for this process to
@@ -128,5 +114,7 @@ func selfDelete() {
 		return
 	}
 	script := fmt.Sprintf(`timeout /T 1 /NOBREAK >NUL & del /F /Q "%s"`, self)
-	_ = exec.Command("cmd", "/C", script).Start()
+	cmd := exec.Command("cmd", "/C", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	_ = cmd.Start()
 }

@@ -63,7 +63,8 @@ func openInDefaultApp(path string) error {
 // syncConfig writes the config file via outputconfig.Sync (adding any
 // device in devices it doesn't already have an entry for, refreshing
 // LastSeen for all of them, and never dropping an entry for a device that
-// isn't in devices, or touching the saved hotkey/autostart/poll interval), and
+// isn't in devices, and writing back the file's own hotkey/autostart/poll
+// interval - never a command-line override), and
 // updates a.cfg/a.configModTime to match. It first picks up any edit made
 // since the file was last read, so it never writes over one - and refuses
 // to write at all while the file on disk fails to parse.
@@ -71,13 +72,13 @@ func (a *app) syncConfig(devices []audio.Device) (map[string]outputconfig.Entry,
 	a.reloadConfigIfChanged()
 
 	a.cfgMu.Lock()
-	cfg, autostart, pollInterval, configErr := a.cfg, a.autostart, a.pollInterval, a.configErr
+	cfg, fileSettings, configErr := a.cfg, a.fileSettings, a.configErr
 	a.cfgMu.Unlock()
 	if configErr != nil {
 		return nil, errConfigInvalid
 	}
 
-	merged, err := outputconfig.Sync(a.currentHotkey(), autostart, int(pollInterval/time.Second), toConfigDevices(devices), cfg)
+	merged, err := outputconfig.Sync(fileSettings, toConfigDevices(devices), cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -140,27 +141,27 @@ func (a *app) reloadConfigIfChanged() {
 	}
 
 	a.cfgMu.Lock()
+	before := a.fileSettings.With(a.overrides)
 	a.cfg = loaded.Devices
-	autostartChanged := a.autostart != loaded.EffectiveAutostart()
-	a.autostart = loaded.EffectiveAutostart()
-	a.pollInterval = loaded.EffectivePollInterval()
+	a.fileSettings = loaded.Settings()
+	after := a.fileSettings.With(a.overrides)
 	// Apply autostart after an invalid file, too: the startup check
 	// skipped it then.
 	wasInvalid := a.configErr != nil
 	a.configErr = nil
 	a.cfgMu.Unlock()
 
-	if autostartChanged || wasInvalid {
-		applyAutostart(loaded.EffectiveAutostart())
+	if after.Autostart != before.Autostart || wasInvalid {
+		applyAutostart(after.Autostart)
 	}
 
-	newCombo := loaded.EffectiveHotkey()
+	newCombo := after.Hotkey
 	if newCombo == a.currentHotkey() {
 		return
 	}
 	if !outputconfig.HotkeyEnabled(newCombo) {
 		a.disableHotkey(newCombo)
-		log.Print("hotkey switched off in the config file")
+		log.Print("hotkey switched off")
 		osd.Show("Hotkey switched off")
 		return
 	}
@@ -178,10 +179,16 @@ func (a *app) devices() map[string]outputconfig.Entry {
 	return a.cfg
 }
 
-func (a *app) currentPollInterval() time.Duration {
+// settings returns the values the app runs with: the config file's,
+// with any command-line overrides applied.
+func (a *app) settings() outputconfig.Settings {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
-	return a.pollInterval
+	return a.fileSettings.With(a.overrides)
+}
+
+func (a *app) currentPollInterval() time.Duration {
+	return a.settings().PollInterval()
 }
 
 func (a *app) configError() error {

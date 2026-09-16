@@ -12,12 +12,15 @@ import (
 
 func TestInstalledExeLivesNextToTheConfig(t *testing.T) {
 	t.Setenv("APPDATA", `C:\Users\test\AppData\Roaming`)
+	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
 
 	if got, want := InstalledExePath(), filepath.Join(filepath.Dir(outputconfig.Path()), ExeName); got != want {
 		t.Errorf("InstalledExePath() = %q, want %q", got, want)
 	}
-	if got, want := LegacyExePath(), filepath.Join(autostart.StartupDir(), ExeName); got != want {
-		t.Errorf("LegacyExePath() = %q, want %q", got, want)
+	for _, legacy := range LegacyExePaths() {
+		if legacy == InstalledExePath() {
+			t.Errorf("LegacyExePaths() includes the current install path %q", legacy)
+		}
 	}
 }
 

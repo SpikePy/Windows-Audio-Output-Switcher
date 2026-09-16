@@ -12,12 +12,12 @@ import (
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 )
 
-// registerHotkey registers a.hotkeyCombo, as loaded from the config file
-// at startup (see main), unless the file switched the hotkey off.
+// registerHotkey registers a.hotkeyCombo, as set up at startup (see
+// main), unless it switches the hotkey off.
 func (a *app) registerHotkey() {
 	combo := a.currentHotkey()
 	if !outputconfig.HotkeyEnabled(combo) {
-		log.Print("hotkey is switched off in the config file")
+		log.Print("hotkey is switched off")
 		return
 	}
 
@@ -56,9 +56,9 @@ func (a *app) applyHotkey(combo string) error {
 	return nil
 }
 
-// disableHotkey unregisters the active hotkey, if any. combo is the
-// file's own way of switching it off (empty, or "disabled"), remembered
-// as-is so syncConfig writes that same value back.
+// disableHotkey unregisters the active hotkey, if any. combo is the value
+// that switched it off (empty, or "disabled"), remembered so a later
+// reload can tell whether anything changed.
 func (a *app) disableHotkey(combo string) {
 	a.hotkeyMu.Lock()
 	oldHk := a.hk

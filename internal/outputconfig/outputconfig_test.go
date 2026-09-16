@@ -10,6 +10,7 @@ import (
 
 func withTempAppData(t *testing.T) {
 	t.Helper()
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("APPDATA", t.TempDir())
 }
 
@@ -91,6 +92,57 @@ func TestLoadKeepsOnlyTheDateOfATimestamp(t *testing.T) {
 	}
 	if got := c.Devices["dev-1"].LastSeen.Format(time.DateOnly); got != "2026-09-16" {
 		t.Errorf("LastSeen = %s, want 2026-09-16", got)
+	}
+}
+
+func writeLegacyConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(LegacyDir(), "config.yaml")
+	if err := os.MkdirAll(LegacyDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestMigrateLegacyMovesTheOldConfig(t *testing.T) {
+	withTempAppData(t)
+	legacy := writeLegacyConfig(t, "hotkey: ctrl+f9\n")
+
+	if err := MigrateLegacy(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readConfig(t); got != "hotkey: ctrl+f9\n" {
+		t.Errorf("migrated config = %q, want the old file's contents", got)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("old config still there: %v", err)
+	}
+}
+
+func TestMigrateLegacyKeepsAnExistingConfig(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, "hotkey: win+a\n")
+	writeLegacyConfig(t, "hotkey: ctrl+f9\n")
+
+	if err := MigrateLegacy(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readConfig(t); got != "hotkey: win+a\n" {
+		t.Errorf("config = %q, want the current file kept", got)
+	}
+}
+
+func TestMigrateLegacyWithoutOldConfig(t *testing.T) {
+	withTempAppData(t)
+
+	if err := MigrateLegacy(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(Path()); !os.IsNotExist(err) {
+		t.Errorf("MigrateLegacy created a config out of nothing: %v", err)
 	}
 }
 
@@ -198,11 +250,34 @@ func TestEffectivePollInterval(t *testing.T) {
 	}
 }
 
+func TestSettingsWithOverrides(t *testing.T) {
+	file := Settings{Hotkey: "win+a", Autostart: true, PollSeconds: 60}
+	hotkey, autostart, poll := "ctrl+f9", false, 5
+
+	if got := file.With(Overrides{}); got != file {
+		t.Errorf("With(no overrides) = %+v, want %+v", got, file)
+	}
+	want := Settings{Hotkey: "ctrl+f9", Autostart: false, PollSeconds: 5}
+	if got := file.With(Overrides{Hotkey: &hotkey, Autostart: &autostart, PollSeconds: &poll}); got != want {
+		t.Errorf("With(all overrides) = %+v, want %+v", got, want)
+	}
+	if got := file.With(Overrides{Autostart: &autostart}); got.Hotkey != "win+a" || got.Autostart || got.PollSeconds != 60 {
+		t.Errorf("With(autostart only) = %+v, want only autostart changed", got)
+	}
+}
+
+func TestConfigSettingsFillsDefaults(t *testing.T) {
+	want := Settings{Hotkey: DefaultHotkey, Autostart: true, PollSeconds: DefaultPollSeconds}
+	if got := (Config{}).Settings(); got != want {
+		t.Errorf("Config{}.Settings() = %+v, want %+v", got, want)
+	}
+}
+
 func TestSyncRoundTrip(t *testing.T) {
 	withTempAppData(t)
 
 	active := []Device{{ID: "dev-1", Name: "Speakers"}, {ID: "dev-2", Name: "Headphones"}}
-	written, err := Sync("ctrl+alt+f9", false, 15, active, nil)
+	written, err := Sync(Settings{Hotkey: "ctrl+alt+f9", Autostart: false, PollSeconds: 15}, active, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +318,7 @@ func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
 	withTempAppData(t)
 
 	for _, off := range []string{"", HotkeyDisabled} {
-		if _, err := Sync(off, true, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+		if _, err := Sync(Settings{Hotkey: off, Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 			t.Fatal(err)
 		}
 		loaded, err := Load()
@@ -261,7 +336,7 @@ func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
 
 func TestSyncWritesLastSeenAsADate(t *testing.T) {
 	withTempAppData(t)
-	if _, err := Sync("", true, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -278,7 +353,7 @@ func TestSyncAddsNewDevicesAndKeepsDisconnectedOnes(t *testing.T) {
 		"old": {ID: "old", Alias: "Living room", Skip: true, LastSeen: past},
 	}
 
-	got, err := Sync("", true, 0, []Device{{ID: "new", Name: "Headset"}}, current)
+	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "new", Name: "Headset"}}, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +375,7 @@ func TestSyncKeepsSameNamedDevicesApart(t *testing.T) {
 	current := map[string]Entry{"a": {ID: "a", Alias: "Front", Skip: true}}
 	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Speakers"}}
 
-	got, err := Sync("", true, 0, active, current)
+	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +392,7 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 	current := map[string]Entry{"a": {Alias: "Desk"}, "b": {}}
 	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Headset"}}
 
-	got, err := Sync("", true, 0, active, current)
+	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +403,7 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 
 func TestSyncWritesEntryKeysInOrder(t *testing.T) {
 	withTempAppData(t)
-	if _, err := Sync("", true, 0, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 

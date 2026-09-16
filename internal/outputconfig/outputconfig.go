@@ -142,17 +142,47 @@ const header = `# Audio Output Switcher - configuration
 
 const fileName = "config.yaml"
 
+const dirName = "AudioOutputSwitcher"
+
 // Dir returns the folder holding everything this app keeps in the user's
 // profile - the config file, and the installed exe next to it:
-// %APPDATA%\AudioOutputSwitcher.
+// %LOCALAPPDATA%\AudioOutputSwitcher.
 func Dir() string {
-	return filepath.Join(os.Getenv("APPDATA"), "AudioOutputSwitcher")
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), dirName)
 }
 
 // Path returns where the config file lives:
-// %APPDATA%\AudioOutputSwitcher\config.yaml.
+// %LOCALAPPDATA%\AudioOutputSwitcher\config.yaml.
 func Path() string {
 	return filepath.Join(Dir(), fileName)
+}
+
+// LegacyDir is where versions up to v1.0.6 kept the config file (and, in
+// v1.0.6, the exe): %APPDATA%\AudioOutputSwitcher.
+func LegacyDir() string {
+	return filepath.Join(os.Getenv("APPDATA"), dirName)
+}
+
+// MigrateLegacy moves a config file an older version left in LegacyDir
+// to Path, unless Path already has one - which then wins, and the old
+// file is left for the caller to clean up along with the rest of
+// LegacyDir. Having nothing to move isn't an error.
+func MigrateLegacy() error {
+	legacy := filepath.Join(LegacyDir(), fileName)
+	if _, err := os.Stat(Path()); err == nil {
+		return nil
+	}
+	data, err := os.ReadFile(legacy)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(Path(), data); err != nil {
+		return err
+	}
+	return os.Remove(legacy)
 }
 
 // Config is everything Load reads back from the config file.
@@ -185,6 +215,55 @@ func (c Config) EffectiveHotkey() string {
 	return c.Hotkey
 }
 
+// Settings are the app-wide values the app runs with, all defaults filled
+// in - as opposed to Config's raw values.
+type Settings struct {
+	Hotkey      string
+	Autostart   bool
+	PollSeconds int
+}
+
+// PollInterval returns PollSeconds as a Duration, or DefaultPollSeconds if
+// it's zero or negative.
+func (s Settings) PollInterval() time.Duration {
+	if s.PollSeconds <= 0 {
+		return DefaultPollSeconds * time.Second
+	}
+	return time.Duration(s.PollSeconds) * time.Second
+}
+
+// Overrides are settings given on the command line, which win over the
+// config file for that run; a nil field leaves the file's value alone.
+type Overrides struct {
+	Hotkey      *string
+	Autostart   *bool
+	PollSeconds *int
+}
+
+// With returns s with every value o sets replaced.
+func (s Settings) With(o Overrides) Settings {
+	if o.Hotkey != nil {
+		s.Hotkey = *o.Hotkey
+	}
+	if o.Autostart != nil {
+		s.Autostart = *o.Autostart
+	}
+	if o.PollSeconds != nil {
+		s.PollSeconds = *o.PollSeconds
+	}
+	return s
+}
+
+// Settings returns the file's app-wide values with defaults filled in -
+// what Sync should write back so a file's own values survive.
+func (c Config) Settings() Settings {
+	return Settings{
+		Hotkey:      c.EffectiveHotkey(),
+		Autostart:   c.EffectiveAutostart(),
+		PollSeconds: int(c.EffectivePollInterval() / time.Second),
+	}
+}
+
 // EffectiveAutostart reports whether the app should start at login: what
 // the file says, or true if it doesn't say (including when there's no
 // config file yet).
@@ -195,10 +274,7 @@ func (c Config) EffectiveAutostart() bool {
 // EffectivePollInterval returns c.PollSeconds as a Duration, or
 // DefaultPollSeconds if it's zero or negative.
 func (c Config) EffectivePollInterval() time.Duration {
-	if c.PollSeconds <= 0 {
-		return DefaultPollSeconds * time.Second
-	}
-	return time.Duration(c.PollSeconds) * time.Second
+	return Settings{PollSeconds: c.PollSeconds}.PollInterval()
 }
 
 // Load returns the last-saved settings. A missing file isn't an error - it
@@ -230,13 +306,13 @@ func Load() (Config, error) {
 	return Config{Exists: true, Hotkey: f.Hotkey, Autostart: f.Autostart, PollSeconds: f.PollSeconds, Devices: entries}, nil
 }
 
-// Sync writes the config file with hotkey, autostart, pollSeconds, an entry for every
+// Sync writes the config file with settings, an entry for every
 // device in active - with today's date as LastSeen, and given the device's
 // Windows name as its alias if it has none yet - and every entry in
 // current for a device that isn't active, unchanged. Entries are never
 // dropped; only a hand-edit removes one. It returns the device entries as
 // written, keyed by ID.
-func Sync(hotkey string, autostart bool, pollSeconds int, active []Device, current map[string]Entry) (map[string]Entry, error) {
+func Sync(settings Settings, active []Device, current map[string]Entry) (map[string]Entry, error) {
 	today := dateOf(time.Now())
 
 	result := make(map[string]Entry, len(current)+len(active))
@@ -266,7 +342,7 @@ func Sync(hotkey string, autostart bool, pollSeconds int, active []Device, curre
 		return entries[i].ID < entries[j].ID
 	})
 
-	data, err := yaml.Marshal(file{Hotkey: hotkey, Autostart: &autostart, PollSeconds: pollSeconds, Outputs: entries})
+	data, err := yaml.Marshal(file{Hotkey: settings.Hotkey, Autostart: &settings.Autostart, PollSeconds: settings.PollSeconds, Outputs: entries})
 	if err != nil {
 		return nil, err
 	}

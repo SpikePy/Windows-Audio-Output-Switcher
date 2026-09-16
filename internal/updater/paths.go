@@ -36,17 +36,21 @@ const (
 )
 
 // InstalledExePath is where the switcher binary lives once installed:
-// next to its config file, in %APPDATA%\AudioOutputSwitcher. The Startup
+// next to its config file, in %LOCALAPPDATA%\AudioOutputSwitcher. The Startup
 // folder only ever holds a shortcut to it (see internal/autostart).
 func InstalledExePath() string {
 	return filepath.Join(outputconfig.Dir(), ExeName)
 }
 
-// LegacyExePath is where versions up to v1.0.5 installed the exe itself:
-// straight into the Startup folder. Install and uninstall remove it (and
-// its .old/.new siblings) so it doesn't linger there.
-func LegacyExePath() string {
-	return filepath.Join(autostart.StartupDir(), ExeName)
+// LegacyExePaths are where older versions installed the exe: straight
+// into the Startup folder up to v1.0.5, and into %APPDATA% in v1.0.6.
+// Install and uninstall remove them (and their .old/.new siblings) so
+// they don't linger.
+func LegacyExePaths() []string {
+	return []string{
+		filepath.Join(autostart.StartupDir(), ExeName),
+		filepath.Join(outputconfig.LegacyDir(), ExeName),
+	}
 }
 
 // LegacyVersionFilePath is that leftover marker, which install and

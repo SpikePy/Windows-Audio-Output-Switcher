@@ -29,11 +29,12 @@ rights required, and nothing running except while you're logged in.
   - **Right-click** opens a menu listing every currently active output
     device — click one to switch to it directly (the active one is
     checked) — followed by *Configure* and *Exit*.
-- **Configure** opens `%APPDATA%\AudioOutputSwitcher\config.yaml` in
+- **Configure** opens `%LOCALAPPDATA%\AudioOutputSwitcher\config.yaml` in
   whatever app Windows has associated with `.yaml` files. There you can
   rename a device (`alias`), leave one out of the cycling (`skip`), turn
-  starting at login off (`autostart`), and change the `hotkey` — or switch it off entirely, leaving the tray icon
-  and menu as the only way to switch. Edits are picked up automatically,
+  starting at login off (`autostart`), and change the `hotkey` — or switch
+  it off entirely, leaving the tray icon and menu as the only way to
+  switch. Edits are picked up automatically,
   no restart needed. Every field is described in the
   [configuration reference](DETAILS.md#configuration).
 
@@ -41,34 +42,41 @@ rights required, and nothing running except while you're logged in.
 
 1. Grab `Setup_AudioOutputSwitcher.exe` from the
    [latest release](../../releases/latest) and run it.
-2. Choose **1) Install or update**. It downloads the newest
-   `AudioOutputSwitcher.exe` into `%APPDATA%\AudioOutputSwitcher`, next to
-   its config, and starts it immediately — no reboot needed. Your Startup
+2. Click **Install / update** (or just wait 5 seconds). It downloads the
+   newest `AudioOutputSwitcher.exe` into
+   `%LOCALAPPDATA%\AudioOutputSwitcher`, next to its config, and starts it
+   immediately — no reboot and no admin rights needed. Your Startup
    folder only gets a shortcut to it, and only while `autostart` is on
    (the default).
 3. Running setup again at any time re-checks for updates: it downloads the
    latest release and only replaces the installed copy if it actually
    differs. It always deploys under the same fixed filename, so there is
    only ever a single installed copy, and nothing else is left lying around
-   to keep track of versions.
+   to keep track of versions. Installs from older versions are moved
+   over, settings included.
 
 The switcher itself has no window; look for its icon in the system tray
 (you may need to expand the "hidden icons" arrow the first time).
 
 ## Uninstalling
 
-Run `Setup_AudioOutputSwitcher.exe` again and choose **2) Uninstall**. It
+Run `Setup_AudioOutputSwitcher.exe` again and click **Uninstall**. It
 stops the running app, removes it and its config along with the Startup
 folder shortcut, and finally removes itself — nothing is left behind.
 
 ## Something not working?
 
-The switcher has no console window, so failures (a hotkey that couldn't be
-registered, COM errors, ...) go to `%TEMP%\AudioOutputSwitcher.log` — see
+Start `AudioOutputSwitcher.exe` with `-enable-logging` to have it write
+`AudioOutputSwitcher.log` next to itself — see
 [Troubleshooting](DETAILS.md#troubleshooting).
 
 ## More
 
-[DETAILS.md](DETAILS.md) has the full configuration reference, how to build
+[DETAILS.md](DETAILS.md) has the full configuration and command-line
+reference, scripted installs, how to build
 from source, how the switching and the `Win+` hotkey actually work, and
 what lives where in the repository.
+
+## License
+
+[MIT](LICENSE)

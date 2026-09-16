@@ -31,10 +31,10 @@ jobs:
       - name: Install rsrc (embeds the .ico as the .exe icon resource)
         run: go install github.com/akavel/rsrc@latest
 
-      - name: Embed application icon into each binary
+      - name: Embed application icon (and setup's manifest) into each binary
         run: |
           rsrc -ico assets/icons/icon.ico -o cmd/switcher/rsrc_windows_amd64.syso
-          rsrc -ico assets/icons/icon.ico -o cmd/setup/rsrc_windows_amd64.syso
+          rsrc -ico assets/icons/icon.ico -manifest assets/setup.manifest -o cmd/setup/rsrc_windows_amd64.syso
 
       - name: Build switcher.exe (GUI subsystem, no console window)
         env:
@@ -44,10 +44,13 @@ jobs:
           -o dist/AudioOutputSwitcher.exe
           ./cmd/switcher
 
-      - name: Build Setup_AudioOutputSwitcher.exe (console app)
+      - name: Build Setup_AudioOutputSwitcher.exe (GUI subsystem, has its own window)
         env:
           CGO_ENABLED: 0
-        run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/Setup_AudioOutputSwitcher.exe ./cmd/setup
+        run: >
+          go build -trimpath -ldflags "-s -w -H=windowsgui -X main.version=${{ github.ref_name }}"
+          -o dist/Setup_AudioOutputSwitcher.exe
+          ./cmd/setup
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
