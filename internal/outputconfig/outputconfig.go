@@ -8,14 +8,18 @@ package outputconfig
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/hotkeycfg"
 )
 
 // Device is a currently active output as Windows reports it.
@@ -202,6 +206,10 @@ type Config struct {
 	PollSeconds int
 	// Devices holds each device's entry, keyed by its Windows ID.
 	Devices map[string]Entry
+	// Problems describes each value Load couldn't use, which then took
+	// its default instead. While there are any, the caller must not Sync
+	// over the file, so the user's text stays for them to fix.
+	Problems []string
 }
 
 // EffectiveHotkey returns the hotkey value to act on: whatever the file
@@ -278,10 +286,13 @@ func (c Config) EffectivePollInterval() time.Duration {
 }
 
 // Load returns the last-saved settings. A missing file isn't an error - it
-// just means nothing has been customized yet, and Sync creates it. A file
-// that can't be read or parsed is: the returned Config then holds
-// defaults, and the caller must not Sync over the file, or the user's
-// hand-edits would be replaced with those defaults.
+// just means nothing has been customized yet, and Sync creates it. An
+// invalid value isn't either: that setting (or that device's field) takes
+// its default and Config.Problems says so, while everything else in the
+// file still applies. Keys Load doesn't know are ignored. A file that
+// can't be read or isn't YAML at all is an error: the returned Config then
+// holds defaults. In both cases the caller must not Sync over the file, or
+// the user's hand-edits would be replaced with those defaults.
 func Load() (Config, error) {
 	empty := Config{Devices: map[string]Entry{}}
 
@@ -293,17 +304,115 @@ func Load() (Config, error) {
 		return empty, err
 	}
 
-	var f file
-	if err := yaml.Unmarshal(data, &f); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return empty, err
 	}
-	entries := make(map[string]Entry, len(f.Outputs))
-	for _, e := range f.Outputs {
+	cfg := Config{Exists: true, Devices: map[string]Entry{}}
+	if len(doc.Content) == 0 { // an empty file
+		return cfg, nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return empty, fmt.Errorf("line %d: expected settings like \"hotkey: win+a\", not a %s", root.Line, kindName(root))
+	}
+
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		key, value := root.Content[i], root.Content[i+1]
+		switch key.Value {
+		case "hotkey":
+			if !decode(value, &cfg.Hotkey, "hotkey", &cfg.Problems) {
+				cfg.Hotkey = DefaultHotkey
+			} else if HotkeyEnabled(cfg.Hotkey) {
+				if _, _, err := hotkeycfg.Parse(cfg.Hotkey); err != nil {
+					cfg.Problems = append(cfg.Problems, fmt.Sprintf("line %d: hotkey %q: %v", value.Line, cfg.Hotkey, err))
+					cfg.Hotkey = DefaultHotkey
+				}
+			}
+		case "autostart":
+			var on bool
+			if decode(value, &on, "autostart", &cfg.Problems) && !isNull(value) {
+				cfg.Autostart = &on
+			}
+		case "poll_seconds":
+			decode(value, &cfg.PollSeconds, "poll_seconds", &cfg.Problems)
+		case "outputs":
+			loadOutputs(value, cfg.Devices, &cfg.Problems)
+		}
+	}
+	return cfg, nil
+}
+
+// loadOutputs adds each row of the outputs list to entries. A field with
+// an invalid value keeps its default; a row that isn't a mapping, or has
+// no ID to match a device by, is skipped.
+func loadOutputs(list *yaml.Node, entries map[string]Entry, problems *[]string) {
+	if isNull(list) {
+		return
+	}
+	if list.Kind != yaml.SequenceNode {
+		*problems = append(*problems, fmt.Sprintf("line %d: outputs should be a list of devices, not a %s", list.Line, kindName(list)))
+		return
+	}
+	for _, row := range list.Content {
+		if row.Kind != yaml.MappingNode {
+			*problems = append(*problems, fmt.Sprintf("line %d: an outputs entry should have id, alias, last_seen and skip, not be a %s", row.Line, kindName(row)))
+			continue
+		}
+		var e Entry
+		for i := 0; i+1 < len(row.Content); i += 2 {
+			key, value := row.Content[i], row.Content[i+1]
+			switch key.Value {
+			case "id":
+				decode(value, &e.ID, "id", problems)
+			case "alias":
+				decode(value, &e.Alias, "alias", problems)
+			case "last_seen":
+				decode(value, &e.LastSeen, "last_seen", problems)
+			case "skip":
+				decode(value, &e.Skip, "skip", problems)
+			}
+		}
 		if e.ID != "" { // a row without an ID can't be matched to any device
 			entries[e.ID] = e
 		}
 	}
-	return Config{Exists: true, Hotkey: f.Hotkey, Autostart: f.Autostart, PollSeconds: f.PollSeconds, Devices: entries}, nil
+}
+
+// decode reads value into out. If that fails it leaves out as it was,
+// records the problem and reports false. A blank value (key with nothing
+// after it) counts as fine and leaves out as it was.
+func decode(value *yaml.Node, out any, name string, problems *[]string) bool {
+	if isNull(value) {
+		return true
+	}
+	if value.Kind != yaml.ScalarNode {
+		*problems = append(*problems, fmt.Sprintf("line %d: %s should be a single value, not a %s", value.Line, name, kindName(value)))
+		return false
+	}
+	// Decode into a fresh value, so a partial failure can't leave out
+	// half-changed.
+	fresh := reflect.New(reflect.TypeOf(out).Elem())
+	if err := value.Decode(fresh.Interface()); err != nil {
+		*problems = append(*problems, fmt.Sprintf("line %d: %s %q is not valid", value.Line, name, value.Value))
+		return false
+	}
+	reflect.ValueOf(out).Elem().Set(fresh.Elem())
+	return true
+}
+
+func isNull(n *yaml.Node) bool {
+	return n.Kind == yaml.ScalarNode && n.Tag == "!!null"
+}
+
+func kindName(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.SequenceNode:
+		return "list"
+	case yaml.MappingNode:
+		return "set of keys"
+	}
+	return "single value"
 }
 
 // Sync writes the config file with settings, an entry for every

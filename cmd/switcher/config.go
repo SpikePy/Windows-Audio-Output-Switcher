@@ -20,9 +20,10 @@ import (
 const createNoWindow = 0x08000000
 
 // errConfigInvalid is returned by syncConfig while the config file on disk
-// fails to parse: writing it then would replace the user's hand-edits (and
-// every disconnected device's row) with defaults.
-var errConfigInvalid = errors.New("config file is invalid; not overwriting it")
+// fails to parse or has an invalid value: writing it then would replace
+// the user's hand-edits (and, for a file that doesn't parse, every
+// disconnected device's row) with defaults.
+var errConfigInvalid = errors.New("config file has errors; not overwriting it")
 
 // openConfigFile (re)writes the config file so it lists every currently
 // known device - active ones, plus any previously excluded name even if
@@ -72,9 +73,9 @@ func (a *app) syncConfig(devices []audio.Device) (map[string]outputconfig.Entry,
 	a.reloadConfigIfChanged()
 
 	a.cfgMu.Lock()
-	cfg, fileSettings, configErr := a.cfg, a.fileSettings, a.configErr
+	cfg, fileSettings, configErr, problems := a.cfg, a.fileSettings, a.configErr, a.problems
 	a.cfgMu.Unlock()
-	if configErr != nil {
+	if configErr != nil || len(problems) > 0 {
 		return nil, errConfigInvalid
 	}
 
@@ -149,7 +150,13 @@ func (a *app) reloadConfigIfChanged() {
 	// skipped it then.
 	wasInvalid := a.configErr != nil
 	a.configErr = nil
+	a.problems = loaded.Problems
 	a.cfgMu.Unlock()
+
+	for _, p := range loaded.Problems {
+		log.Printf("config file: %s - using its default", p)
+	}
+	a.announceConfigTrouble()
 
 	if after.Autostart != before.Autostart || wasInvalid {
 		applyAutostart(after.Autostart)
@@ -191,10 +198,21 @@ func (a *app) currentPollInterval() time.Duration {
 	return a.settings().PollInterval()
 }
 
-func (a *app) configError() error {
+// announceConfigTrouble tells the user, on screen, if the config file
+// can't be read or has a value that was replaced by its default.
+func (a *app) announceConfigTrouble() {
 	a.cfgMu.Lock()
-	defer a.cfgMu.Unlock()
-	return a.configErr
+	configErr, problems := a.configErr, a.problems
+	a.cfgMu.Unlock()
+
+	switch {
+	case configErr != nil:
+		osd.Show("Config file has an error - using defaults until it's fixed")
+	case len(problems) == 1:
+		osd.Show("Config file: " + problems[0] + " - using its default")
+	case len(problems) > 1:
+		osd.Show(fmt.Sprintf("Config file has %d invalid values - using their defaults", len(problems)))
+	}
 }
 
 // skipSet returns the IDs of the devices currently excluded from cycling.

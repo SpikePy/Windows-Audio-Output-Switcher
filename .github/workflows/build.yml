@@ -1,4 +1,4 @@
-name: Release
+name: Build and Release
 
 on:
   push:
@@ -28,13 +28,11 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Install rsrc (embeds the .ico as the .exe icon resource)
-        run: go install github.com/akavel/rsrc@latest
+      - name: Test
+        run: go test ./...
 
-      - name: Embed application icon (and setup's manifest) into each binary
-        run: |
-          rsrc -ico assets/icons/icon.ico -o cmd/switcher/rsrc_windows_amd64.syso
-          rsrc -ico assets/icons/icon.ico -manifest assets/setup.manifest -o cmd/setup/rsrc_windows_amd64.syso
+      - name: Vet
+        run: go vet -unsafeptr=false ./...
 
       - name: Build switcher.exe (GUI subsystem, no console window)
         env:

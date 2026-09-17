@@ -44,7 +44,7 @@ type Progress func(msg string)
 func Install(progress Progress) error {
 	progress("Checking for the latest release...")
 
-	release, err := updater.LatestRelease()
+	tag, err := updater.LatestTag()
 	if err != nil {
 		return err
 	}
@@ -54,9 +54,9 @@ func Install(progress Progress) error {
 		return fmt.Errorf("create install folder: %w", err)
 	}
 
-	progress(fmt.Sprintf("Downloading %s...", release.TagName))
+	progress(fmt.Sprintf("Downloading %s...", tag))
 	downloaded := exePath + ".new"
-	if err := updater.Download(updater.AssetDownloadURL(release.TagName, updater.AssetName), downloaded); err != nil {
+	if err := updater.Download(updater.LatestAssetURL(updater.AssetName), downloaded); err != nil {
 		return fmt.Errorf("download %s: %w", updater.AssetName, err)
 	}
 	defer os.Remove(downloaded) // a no-op once it has been renamed into place
@@ -71,11 +71,11 @@ func Install(progress Progress) error {
 			progress("Starting Audio Output Switcher...")
 			_ = start(exePath)
 		}
-		progress(fmt.Sprintf("%s is already installed. %s", release.TagName, applyAutostart(exePath, progress)))
+		progress(fmt.Sprintf("%s is already installed. %s", tag, applyAutostart(exePath, progress)))
 		return nil
 	}
 
-	progress(fmt.Sprintf("Installing %s...", release.TagName))
+	progress(fmt.Sprintf("Installing %s...", tag))
 	updater.KillRunning()
 
 	// A running exe can still be renamed out of the way on Windows even
@@ -99,7 +99,7 @@ func Install(progress Progress) error {
 		return fmt.Errorf("start %s: %w", exePath, err)
 	}
 
-	progress(fmt.Sprintf("%s is installed and running. %s", release.TagName, applyAutostart(exePath, progress)))
+	progress(fmt.Sprintf("%s is installed and running. %s", tag, applyAutostart(exePath, progress)))
 	return nil
 }
 

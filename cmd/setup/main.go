@@ -2,7 +2,7 @@
 
 // Command setup is the single entry point for installing, updating, and
 // uninstalling Audio Output Switcher. Double-clicked, it shows a small
-// window asking which of the two you want (see window.go); with
+// task dialog asking which of the two you want (see dialog.go); with
 // -mode install|uninstall it does that straight away, for scripting.
 package main
 
@@ -42,12 +42,14 @@ func main() {
 
 	switch *mode {
 	case "":
-		if runWindow() {
+		code, removed := runDialog()
+		if removed {
 			// Uninstall doesn't remove this exe itself - do that last,
 			// once the window is gone, so running setup leaves nothing
 			// behind once you've chosen to uninstall.
 			selfDelete()
 		}
+		os.Exit(code)
 	case "install", "uninstall":
 		os.Exit(runScripted(*mode))
 	default:

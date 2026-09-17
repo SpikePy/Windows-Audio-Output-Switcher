@@ -2,7 +2,7 @@
 
 // Package updater implements what internal/install needs from the outside
 // world: locating the installed exe, finding the latest GitHub
-// release, and downloading its assets.
+// release, and downloading its assets through WinINet.
 package updater
 
 import (
@@ -13,16 +13,6 @@ import (
 )
 
 const (
-	// Owner and Repo identify the GitHub repository releases are
-	// fetched from.
-	Owner = "SpikePy"
-	Repo  = "Windows-Audio-Output-Switcher"
-
-	// AssetName is the exact release asset name the CI build publishes
-	// (see .github/workflows/release.yml) and that the installer looks
-	// for on the latest release.
-	AssetName = "AudioOutputSwitcher.exe"
-
 	// ExeName is the fixed filename the switcher is installed under.
 	// Always using the same name is what guarantees there is ever only
 	// one installed copy, even across updates.

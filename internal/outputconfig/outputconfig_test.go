@@ -67,6 +67,71 @@ func TestLoadMalformedFileReportsError(t *testing.T) {
 	}
 }
 
+func TestLoadFallsBackPerField(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, `hotkey: ctrl+nonsense
+autostart: maybe
+poll_seconds: soon
+unknown_key: whatever
+outputs:
+  - id: dev-1
+    alias: Desk
+    last_seen: yesterday
+    skip: perhaps
+  - id: dev-2
+    alias: Headset
+    skip: true
+  - just a string
+`)
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if c.Hotkey != DefaultHotkey || !c.EffectiveAutostart() || c.PollSeconds != 0 {
+		t.Errorf("settings = %q/%v/%d, want each invalid one at its default", c.Hotkey, c.EffectiveAutostart(), c.PollSeconds)
+	}
+	if d := c.Devices["dev-1"]; d.Alias != "Desk" || d.Skip || !d.LastSeen.IsZero() {
+		t.Errorf("dev-1 = %+v, want its alias kept and the invalid fields at their defaults", d)
+	}
+	if d := c.Devices["dev-2"]; d.Alias != "Headset" || !d.Skip {
+		t.Errorf("dev-2 = %+v, want it read as written", d)
+	}
+	if len(c.Problems) != 6 {
+		t.Errorf("Problems = %q, want one per invalid value (6)", c.Problems)
+	}
+	for _, p := range c.Problems {
+		if !strings.HasPrefix(p, "line ") {
+			t.Errorf("problem %q doesn't say which line", p)
+		}
+	}
+}
+
+func TestLoadAcceptsValidAndBlankValues(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, "hotkey: disabled\nautostart:\npoll_seconds: 30\noutputs:\n")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Problems) != 0 {
+		t.Errorf("Problems = %q, want none", c.Problems)
+	}
+	if c.Hotkey != HotkeyDisabled || !c.EffectiveAutostart() || c.PollSeconds != 30 {
+		t.Errorf("Load() = %+v", c)
+	}
+}
+
+func TestLoadRejectsAFileThatIsNotSettings(t *testing.T) {
+	withTempAppData(t)
+	writeConfig(t, "- just\n- a list\n")
+
+	if _, err := Load(); err == nil {
+		t.Error("Load() accepted a list as the whole file, want an error")
+	}
+}
+
 func TestLoadSkipsRowsWithoutID(t *testing.T) {
 	withTempAppData(t)
 	writeConfig(t, "outputs:\n  - alias: No ID\n  - alias: Desk\n    id: dev-1\n")

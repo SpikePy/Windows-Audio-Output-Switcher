@@ -23,7 +23,6 @@ import (
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/autostart"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
-	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/osd"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
@@ -68,6 +67,7 @@ type app struct {
 	fileSettings  outputconfig.Settings // the file's own values, written back by syncConfig - see settings
 	configModTime time.Time             // file mtime as of the last read or write - see reloadConfigIfChanged
 	configErr     error                 // non-nil while the file on disk fails to parse
+	problems      []string              // values in the file that were invalid and replaced by defaults
 	cfgMu         sync.Mutex
 
 	mConfigOutputs *systray.MenuItem
@@ -114,12 +114,16 @@ func main() {
 	if err != nil {
 		log.Printf("config file is invalid, using defaults until it's fixed: %v", err)
 	}
+	for _, p := range loaded.Problems {
+		log.Printf("config file: %s - using its default", p)
+	}
 	a := &app{
 		overrides:     overrides,
 		cfg:           loaded.Devices,
 		fileSettings:  loaded.Settings(),
 		configModTime: outputconfig.ModTime(),
 		configErr:     err,
+		problems:      loaded.Problems,
 	}
 	settings := a.settings()
 	a.hotkeyCombo = settings.Hotkey
@@ -204,9 +208,7 @@ func (a *app) onReady() {
 	systray.SetOnTapped(a.switchOutput)
 
 	a.worker = audio.StartWorker()
-	if a.configError() != nil {
-		osd.Show("Config file has an error - using defaults until it's fixed")
-	}
+	a.announceConfigTrouble()
 	a.registerHotkey()
 	a.syncDeviceMenu()
 

@@ -1,7 +1,6 @@
 // Package icons bundles the application icon into the switcher binary so
-// it stays a single self-contained .exe. icon.ico is also used by CI as
-// the source for both .exe files' own icon resource (see
-// .github/workflows/release.yml).
+// it stays a single self-contained .exe. icon.ico is written by
+// tools/genicon, which also turns it into both exes' own icon resource.
 package icons
 
 import (

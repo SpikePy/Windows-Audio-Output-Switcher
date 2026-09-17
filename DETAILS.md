@@ -43,9 +43,16 @@ associated with `.yaml` files, for you to hand-edit:
     It's still shown in the right-click menu (as "*(excluded)*") and stays
     fully clickable there, so you can switch to it directly at any time.
 
-Edits are picked up automatically, no restart needed. If a save leaves the
-file invalid (e.g. a YAML typo), the app keeps its previous settings, tells
-you so, and won't write to the file until it's fixed.
+Edits are picked up automatically, no restart needed. A value that isn't
+valid (say `poll_seconds: soon`, or a hotkey that doesn't parse) falls back
+to that setting's default while everything else in the file still applies;
+keys the app doesn't know are ignored. A file that isn't YAML at all (e.g.
+a missing bracket) is ignored as a whole, keeping the previous settings.
+Either way the app tells you on screen, and won't write to the file until
+it's fixed.
+
+Setup's window closes itself 5 seconds after a successful install, update
+or uninstall, and stays open after an error.
 
 Up to v1.0.6 the config lived in `%APPDATA%\AudioOutputSwitcher`; setup
 and the app move it over on their own.
@@ -95,15 +102,33 @@ go test ./...
 (Cross-compiling from Linux/WSL also works by prefixing the build commands
 with `GOOS=windows GOARCH=amd64`.)
 
+The icon is drawn in code by [`tools/genicon`](tools/genicon), which writes
+`assets/icons/icon.ico` (the tray icon); both exes carry it as their file
+icon through the committed `rsrc_windows_amd64.syso` next to their
+`main.go`, setup's together with `assets/setup.manifest` (common controls
+v6 for its task dialog, sharp text at any display scaling, no admin
+prompt). After changing the glyph, regenerate all three:
+
+```sh
+go run ./tools/genicon assets/icons/icon.ico
+go run github.com/akavel/rsrc@latest -arch amd64 -ico assets/icons/icon.ico -o cmd/switcher/rsrc_windows_amd64.syso
+go run github.com/akavel/rsrc@latest -arch amd64 -ico assets/icons/icon.ico -manifest assets/setup.manifest -o cmd/setup/rsrc_windows_amd64.syso
+```
+
+A test fails if the committed files don't match what `genicon` renders.
+
 Both pipelines run on Windows runners:
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) checks formatting,
 builds, vets and tests every push to `main` and every pull request, and
-[`.github/workflows/release.yml`](.github/workflows/release.yml) — triggered
-by pushing a tag matching `v*.*.*` — builds both binaries, embeds
-`assets/icons/icon.ico` as each `.exe`'s icon resource (plus
-`assets/setup.manifest` into setup, for current-looking controls and sharp
-text at any display scaling), and publishes them on
-a new GitHub release.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) — triggered
+by pushing a tag matching `v*.*.*` — runs the same checks, builds both
+binaries and publishes them on a new GitHub release.
+
+Setup always installs the newest release: it reads the version from where
+`releases/latest` redirects to and downloads
+`releases/latest/download/AudioOutputSwitcher.exe`, through WinINet
+(Windows' own HTTP stack, with the system proxy and certificates). It never
+calls the GitHub API, whose rate limit breaks installs on shared networks.
 
 ## How the switch actually happens
 
@@ -141,14 +166,14 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | Path                     | Purpose                                                          |
 | ------------------------ | ----------------------------------------------------------------- |
 | `cmd/switcher`           | The tray application                                             |
-| `cmd/setup`              | Setup's install/update/uninstall window and `-mode` flag        |
+| `cmd/setup`              | Setup's task dialog and `-mode` flag                             |
 | `internal/audio`         | Core Audio API + `IPolicyConfig` bindings, device notifications  |
 | `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
 | `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `config.yaml` |
 | `internal/autostart`     | Keeps the Startup folder shortcut in line with `autostart`       |
-| `internal/setupmenu`     | Setup window's choice/countdown flow, without Win32 (tested)     |
-| `internal/install`       | Install/update/uninstall logic shared by `cmd/setup`             |
-| `internal/updater`       | GitHub release lookup/download over WinHTTP, for `internal/install` |
-| `assets/icons`           | Embedded tray/exe icon                                           |
+| `internal/install`       | Install/update/uninstall logic and setup's countdowns            |
+| `internal/updater`       | Latest-release lookup and download over WinINet                  |
+| `assets/icons`           | Embedded tray icon                                               |
+| `tools/genicon`          | Draws the icon and checks the committed icon files               |

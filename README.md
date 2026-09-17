@@ -42,7 +42,7 @@ rights required, and nothing running except while you're logged in.
 
 1. Grab `Setup_AudioOutputSwitcher.exe` from the
    [latest release](../../releases/latest) and run it.
-2. Click **Install / update** (or just wait 5 seconds). It downloads the
+2. Click **Install/Update** (or just wait 5 seconds). It downloads the
    newest `AudioOutputSwitcher.exe` into
    `%LOCALAPPDATA%\AudioOutputSwitcher`, next to its config, and starts it
    immediately — no reboot and no admin rights needed. Your Startup
