@@ -117,7 +117,7 @@ func cycleNext(excluded map[string]bool) SwitchResult {
 
 	devices := included(all, excluded)
 	if len(devices) == 0 {
-		return SwitchResult{Err: errors.New("every output is excluded in Configure")}
+		return SwitchResult{Err: errors.New("every output is set to skip in the config file")}
 	}
 	if len(devices) == 1 {
 		return SwitchResult{Device: devices[0]}

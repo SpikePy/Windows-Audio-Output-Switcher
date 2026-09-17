@@ -19,12 +19,12 @@ import (
 // items after the fact.
 const maxDeviceSlots = 16
 
-// excludedSuffix marks a device excluded from cycling in the menu. Windows
+// skippedSuffix marks a device skipped when cycling in the menu. Windows
 // menu items can't be greyed out while staying clickable (MF_GRAYED also
 // blocks the click at the OS level, and the tray library has no
-// owner-draw hook to fake it), so excluded devices are marked in the
+// owner-draw hook to fake it), so skipped devices are marked in the
 // label instead - they stay fully clickable for a direct, one-off switch.
-const excludedSuffix = "  (excluded)"
+const skippedSuffix = "  (skipped)"
 
 type deviceSlot struct {
 	item *systray.MenuItem
@@ -99,7 +99,7 @@ func (a *app) syncDeviceMenu() {
 		d := devices[i]
 		title := outputconfig.DisplayName(cfg, d.ID, d.Name)
 		if cfg[d.ID].Skip {
-			title += excludedSuffix
+			title += skippedSuffix
 		}
 		item.SetTitle(title)
 		item.SetTooltip("Switch to " + title)
