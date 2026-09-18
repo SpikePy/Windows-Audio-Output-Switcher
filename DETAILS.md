@@ -40,8 +40,8 @@ associated with `.yaml` files, for you to hand-edit:
     automatically; useful for spotting stale entries worth deleting by
     hand.
   - `skip` — set to `true` to leave it out of hotkey/left-click cycling.
-    It's still shown in the right-click menu (struck through) and stays
-    fully clickable there, so you can switch to it directly at any time.
+    It's still shown in the right-click menu, greyed out, and stays fully
+    clickable there, so you can switch to it directly at any time.
 
 Edits are picked up automatically, no restart needed. A value that isn't
 valid (say `poll_seconds: soon`, or a hotkey that doesn't parse) falls back
@@ -161,6 +161,26 @@ flag this pattern heuristically since it overlaps with how keyloggers work;
 if that happens, it's a false positive rather than any actual keystroke
 logging, and the source in `internal/llhotkey` is the whole of what runs.
 
+## Greying out a menu entry that still works
+
+A skipped device stays in the tray menu, greyed out but clickable. Windows
+has no flag for that: `MF_GRAYED` greys an item *and* makes it unclickable,
+and the two can't be separated.
+
+So [`internal/menupaint`](internal/menupaint) draws those entries itself.
+It subclasses the tray library's message window, turns the device entries
+into owner-draw items each time the menu is about to open (the library
+resets them to plain strings whenever it sets a title), and answers the
+`WM_MEASUREITEM`/`WM_DRAWITEM` messages that follow - sizing each entry so
+it lines up with the ones Windows still draws (Configure, Exit) and
+painting a skipped one in the system's colour for unavailable text. The
+menu's background colour is read off the popup itself rather than assumed,
+so the entries stay invisible against whatever the current theme paints.
+
+`go test -tags visual -run TestVisualMenu ./internal/menupaint` puts that
+menu on screen for a few seconds to check it by eye; it's behind a build
+tag because it takes over the screen while it runs.
+
 ## Project layout
 
 | Path                     | Purpose                                                          |
@@ -171,6 +191,7 @@ logging, and the source in `internal/llhotkey` is the whole of what runs.
 | `internal/llhotkey`      | Global hotkey via a low-level keyboard hook                      |
 | `internal/hotkeycfg`     | Parses hotkey combo strings like `"ctrl+alt+f9"`                 |
 | `internal/osd`           | The volume-OSD-style on-screen switch notification               |
+| `internal/menupaint`     | Draws the menu's device entries, so skipped ones can be greyed   |
 | `internal/outputconfig`  | Persists hotkey/poll interval/per-device settings to `config.yaml` |
 | `internal/autostart`     | Keeps the Startup folder shortcut in line with `autostart`       |
 | `internal/install`       | Install/update/uninstall logic and setup's countdowns            |

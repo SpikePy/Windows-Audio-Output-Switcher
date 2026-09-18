@@ -23,6 +23,7 @@ import (
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/audio"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/autostart"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/llhotkey"
+	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/menupaint"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/outputconfig"
 	"github.com/SpikePy/Windows-Audio-Output-Switcher/internal/updater"
 )
@@ -206,6 +207,12 @@ func (a *app) onReady() {
 	// Left click switches to the next output device directly, same as
 	// the hotkey; right click shows the menu built above.
 	systray.SetOnTapped(a.switchOutput)
+
+	// Take over drawing the device entries, so skipped ones can be shown
+	// faded. Only the fading is lost if this fails.
+	if err := menupaint.Attach(); err != nil {
+		log.Printf("menu painting: %v", err)
+	}
 
 	a.worker = audio.StartWorker()
 	a.announceConfigTrouble()
