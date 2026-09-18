@@ -40,7 +40,7 @@ associated with `.yaml` files, for you to hand-edit:
     automatically; useful for spotting stale entries worth deleting by
     hand.
   - `skip` — set to `true` to leave it out of hotkey/left-click cycling.
-    It's still shown in the right-click menu (as "*(skipped)*") and stays
+    It's still shown in the right-click menu (struck through) and stays
     fully clickable there, so you can switch to it directly at any time.
 
 Edits are picked up automatically, no restart needed. A value that isn't

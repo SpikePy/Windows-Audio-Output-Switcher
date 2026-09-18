@@ -5,7 +5,9 @@ package main
 import (
 	"errors"
 	"log"
+	"strings"
 	"time"
+	"unicode"
 
 	"fyne.io/systray"
 
@@ -19,12 +21,37 @@ import (
 // items after the fact.
 const maxDeviceSlots = 16
 
-// skippedSuffix marks a device skipped when cycling in the menu. Windows
-// menu items can't be greyed out while staying clickable (MF_GRAYED also
-// blocks the click at the OS level, and the tray library has no
-// owner-draw hook to fake it), so skipped devices are marked in the
-// label instead - they stay fully clickable for a direct, one-off switch.
-const skippedSuffix = "  (skipped)"
+// strikeMark is U+0336 COMBINING LONG STROKE OVERLAY: it draws a line
+// through the character in front of it, which is how a skipped device is
+// struck through in the menu. Windows menu items can't be greyed out
+// while staying clickable (MF_GRAYED also blocks the click at the OS
+// level, and the tray library has no owner-draw hook to fake it), so the
+// strike lives in the label text itself - the item stays fully clickable
+// for a direct, one-off switch.
+const strikeMark = '\u0336'
+
+// strikeThrough returns s with every character struck through. Combining
+// marks already in s are left to attach to their base character, so the
+// stroke is added once per visible character rather than once per rune.
+func strikeThrough(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) * 3)
+	struck := false
+	for _, r := range s {
+		if !unicode.Is(unicode.Mn, r) && struck {
+			b.WriteRune(strikeMark)
+			struck = false
+		}
+		b.WriteRune(r)
+		if !unicode.Is(unicode.Mn, r) {
+			struck = true
+		}
+	}
+	if struck {
+		b.WriteRune(strikeMark)
+	}
+	return b.String()
+}
 
 type deviceSlot struct {
 	item *systray.MenuItem
@@ -97,12 +124,15 @@ func (a *app) syncDeviceMenu() {
 		}
 
 		d := devices[i]
-		title := outputconfig.DisplayName(cfg, d.ID, d.Name)
+		name := outputconfig.DisplayName(cfg, d.ID, d.Name)
+		title := name
 		if cfg[d.ID].Skip {
-			title += skippedSuffix
+			title = strikeThrough(name)
 		}
 		item.SetTitle(title)
-		item.SetTooltip("Switch to " + title)
+		// The tooltip keeps the plain name: the strikethrough is there to
+		// be seen in the menu, not read out again in a hover text.
+		item.SetTooltip("Switch to " + name)
 		a.deviceSlots[i].id = d.ID
 		if d.ID == current.ID {
 			item.Check()
