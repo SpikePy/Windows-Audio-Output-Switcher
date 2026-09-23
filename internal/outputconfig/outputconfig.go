@@ -33,13 +33,20 @@ type Device struct {
 type Entry struct {
 	// ID is the Windows endpoint ID the entry belongs to.
 	ID string `yaml:"id"`
+	// WindowsName is the device's name in Windows as of the last time Sync
+	// found it active. It's informational only - the device is matched by
+	// ID, and Alias is what's shown.
+	WindowsName string `yaml:"windows_name"`
 	// Alias is the name shown for the device in the tray menu and OSD.
 	// Sync fills in the device's Windows name while it's blank.
 	Alias string `yaml:"alias"`
 	// LastSeen is the day Sync last found the device active; the zero value
 	// means never. It's informational only - Sync never removes an entry.
 	LastSeen Date `yaml:"last_seen"`
-	Skip     bool `yaml:"skip"`
+	// Active is true for the device that was the default output when Sync
+	// last ran; informational only, editing it switches nothing.
+	Active bool `yaml:"active"`
+	Skip   bool `yaml:"skip"`
 }
 
 // Date is a calendar day, written to the config file as YYYY-MM-DD.
@@ -127,16 +134,21 @@ const header = `# Audio Output Switcher - configuration
 #           rather than being removed automatically - delete it by hand
 #           if you want it gone for good.
 #
-#   id         - the Windows endpoint ID this row belongs to; don't edit.
-#   alias      - the name shown for this device in the tray menu and the
-#                on-screen notification; filled in with the device's
-#                Windows name if left blank.
-#   last_seen  - the date this device was last detected as active;
-#                updated automatically, not meant to be hand-edited.
-#   skip       - set to true to leave this device out when cycling
-#                outputs (hotkey or left-click tray icon); it stays fully
-#                clickable in the tray menu for a direct, one-off switch
-#                either way.
+#   id           - the Windows endpoint ID this row belongs to; don't edit.
+#   windows_name - the device's current name in Windows; updated
+#                  automatically, not meant to be hand-edited.
+#   alias        - the name shown for this device in the tray menu and the
+#                  on-screen notification; filled in with the device's
+#                  Windows name if left blank.
+#   last_seen    - the date this device was last detected as connected;
+#                  updated automatically, not meant to be hand-edited.
+#   active       - true for the device that is currently the default
+#                  output; updated automatically, editing it switches
+#                  nothing.
+#   skip         - set to true to leave this device out when cycling
+#                  outputs (hotkey or left-click tray icon); it stays fully
+#                  clickable in the tray menu for a direct, one-off switch
+#                  either way.
 #
 # Edits are picked up automatically after saving - no need to restart
 # the app. If a save leaves this file invalid, the app keeps its previous
@@ -356,7 +368,7 @@ func loadOutputs(list *yaml.Node, entries map[string]Entry, problems *[]string) 
 	}
 	for _, row := range list.Content {
 		if row.Kind != yaml.MappingNode {
-			*problems = append(*problems, fmt.Sprintf("line %d: an outputs entry should have id, alias, last_seen and skip, not be a %s", row.Line, kindName(row)))
+			*problems = append(*problems, fmt.Sprintf("line %d: an outputs entry should have id, alias, skip and so on, not be a %s", row.Line, kindName(row)))
 			continue
 		}
 		var e Entry
@@ -365,10 +377,14 @@ func loadOutputs(list *yaml.Node, entries map[string]Entry, problems *[]string) 
 			switch key.Value {
 			case "id":
 				decode(value, &e.ID, "id", problems)
+			case "windows_name":
+				decode(value, &e.WindowsName, "windows_name", problems)
 			case "alias":
 				decode(value, &e.Alias, "alias", problems)
 			case "last_seen":
 				decode(value, &e.LastSeen, "last_seen", problems)
+			case "active":
+				decode(value, &e.Active, "active", problems)
 			case "skip":
 				decode(value, &e.Skip, "skip", problems)
 			}
@@ -416,26 +432,30 @@ func kindName(n *yaml.Node) string {
 }
 
 // Sync writes the config file with settings, an entry for every
-// device in active - with today's date as LastSeen, and given the device's
-// Windows name as its alias if it has none yet - and every entry in
-// current for a device that isn't active, unchanged. Entries are never
-// dropped; only a hand-edit removes one. It returns the device entries as
-// written, keyed by ID.
-func Sync(settings Settings, active []Device, current map[string]Entry) (map[string]Entry, error) {
+// device in active - with its current Windows name, today's date as
+// LastSeen, and given that name as its alias if it has none yet - and
+// every entry in current for a device that isn't active, unchanged. Only
+// the entry for defaultID (the current default output) is marked Active.
+// Entries are never dropped; only a hand-edit removes one. It returns the
+// device entries as written, keyed by ID.
+func Sync(settings Settings, active []Device, defaultID string, current map[string]Entry) (map[string]Entry, error) {
 	today := dateOf(time.Now())
 
 	result := make(map[string]Entry, len(current)+len(active))
 	for id, e := range current {
 		e.ID = id
+		e.Active = id == defaultID
 		result[id] = e
 	}
 	for _, d := range active {
 		e := result[d.ID]
 		e.ID = d.ID
+		e.WindowsName = d.Name
 		if e.Alias == "" {
 			e.Alias = d.Name
 		}
 		e.LastSeen = today
+		e.Active = d.ID == defaultID
 		result[d.ID] = e
 	}
 
@@ -459,6 +479,25 @@ func Sync(settings Settings, active []Device, current map[string]Entry) (map[str
 		return nil, err
 	}
 	return result, nil
+}
+
+// Stale reports whether entries is missing something Sync would write for
+// the given active devices and default output: an entry for a device, its
+// current Windows name, or which device is the active one. LastSeen alone
+// doesn't count, so the file isn't rewritten just because the date changed.
+func Stale(active []Device, defaultID string, entries map[string]Entry) bool {
+	for _, d := range active {
+		e, ok := entries[d.ID]
+		if !ok || e.WindowsName != d.Name {
+			return true
+		}
+	}
+	for id, e := range entries {
+		if e.Active != (id == defaultID) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeFileAtomic writes data to a temporary file next to path and renames

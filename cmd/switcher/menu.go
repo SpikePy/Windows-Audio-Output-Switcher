@@ -61,19 +61,22 @@ func (a *app) syncDeviceMenu() {
 		log.Printf("list devices: %v", err)
 		return
 	}
-	current, err := a.worker.Current()
-	if err != nil {
-		log.Printf("get current device: %v", err)
+	current, currentErr := a.worker.Current()
+	if currentErr != nil {
+		log.Printf("get current device: %v", currentErr)
 	}
 
+	// Keep the config file's device rows current: new devices, Windows
+	// names and which one is active. Without a known default output,
+	// leave the file alone rather than clear its active flag.
 	cfg := a.devices()
-	if hasNewDevice(devices, cfg) {
-		merged, err := a.syncConfig(devices)
+	if currentErr == nil && outputconfig.Stale(toConfigDevices(devices), current.ID, cfg) {
+		merged, err := a.syncConfig(devices, current.ID)
 		switch {
 		case err == nil:
 			cfg = merged
 		case !errors.Is(err, errConfigInvalid):
-			log.Printf("auto-add new device(s) to config: %v", err)
+			log.Printf("update devices in config: %v", err)
 		}
 	}
 

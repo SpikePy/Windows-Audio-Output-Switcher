@@ -342,7 +342,7 @@ func TestSyncRoundTrip(t *testing.T) {
 	withTempAppData(t)
 
 	active := []Device{{ID: "dev-1", Name: "Speakers"}, {ID: "dev-2", Name: "Headphones"}}
-	written, err := Sync(Settings{Hotkey: "ctrl+alt+f9", Autostart: false, PollSeconds: 15}, active, nil)
+	written, err := Sync(Settings{Hotkey: "ctrl+alt+f9", Autostart: false, PollSeconds: 15}, active, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,9 +371,6 @@ func TestSyncRoundTrip(t *testing.T) {
 	if !strings.HasPrefix(data, "# Audio Output Switcher") {
 		t.Error("written file is missing its explanatory header")
 	}
-	if strings.Contains(data, "name:") {
-		t.Error("written file still has a name field")
-	}
 	if _, err := os.Stat(Path() + ".tmp"); !os.IsNotExist(err) {
 		t.Errorf("temporary file left behind: %v", err)
 	}
@@ -383,7 +380,7 @@ func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
 	withTempAppData(t)
 
 	for _, off := range []string{"", HotkeyDisabled} {
-		if _, err := Sync(Settings{Hotkey: off, Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+		if _, err := Sync(Settings{Hotkey: off, Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, "", nil); err != nil {
 			t.Fatal(err)
 		}
 		loaded, err := Load()
@@ -401,7 +398,7 @@ func TestSyncKeepsAnOffHotkeyAsWritten(t *testing.T) {
 
 func TestSyncWritesLastSeenAsADate(t *testing.T) {
 	withTempAppData(t)
-	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -418,7 +415,7 @@ func TestSyncAddsNewDevicesAndKeepsDisconnectedOnes(t *testing.T) {
 		"old": {ID: "old", Alias: "Living room", Skip: true, LastSeen: past},
 	}
 
-	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "new", Name: "Headset"}}, current)
+	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "new", Name: "Headset"}}, "", current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +437,7 @@ func TestSyncKeepsSameNamedDevicesApart(t *testing.T) {
 	current := map[string]Entry{"a": {ID: "a", Alias: "Front", Skip: true}}
 	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Speakers"}}
 
-	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, current)
+	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, "", current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +454,7 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 	current := map[string]Entry{"a": {Alias: "Desk"}, "b": {}}
 	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Headset"}}
 
-	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, current)
+	got, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, "", current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +465,7 @@ func TestSyncFillsOnlyBlankAliases(t *testing.T) {
 
 func TestSyncWritesEntryKeysInOrder(t *testing.T) {
 	withTempAppData(t)
-	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, nil); err != nil {
+	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, []Device{{ID: "dev-1", Name: "Speakers"}}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -479,7 +476,7 @@ func TestSyncWritesEntryKeysInOrder(t *testing.T) {
 	}
 	outputs := data[start:]
 	last := -1
-	for _, key := range []string{"id:", "alias:", "last_seen:", "skip:"} {
+	for _, key := range []string{"id:", "windows_name:", "alias:", "last_seen:", "active:", "skip:"} {
 		i := strings.Index(outputs, key)
 		if i <= last {
 			t.Fatalf("key %q missing or out of order in:\n%s", key, outputs)
@@ -501,6 +498,77 @@ func TestDisplayName(t *testing.T) {
 	for _, tt := range tests {
 		if got := DisplayName(entries, tt.id, tt.windowsName); got != tt.want {
 			t.Errorf("DisplayName(%q, %q) = %q, want %q", tt.id, tt.windowsName, got, tt.want)
+		}
+	}
+}
+
+func TestSyncRecordsWindowsNameAndActiveDevice(t *testing.T) {
+	withTempAppData(t)
+	current := map[string]Entry{
+		"a":   {ID: "a", Alias: "Desk", WindowsName: "Old name", Active: true},
+		"old": {ID: "old", Alias: "Living room", WindowsName: "TV", Active: true},
+	}
+	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Headset"}}
+
+	if _, err := Sync(Settings{Hotkey: "", Autostart: true, PollSeconds: 0}, active, "b", current); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct {
+		windowsName string
+		active      bool
+	}{
+		"a":   {"Speakers", false},
+		"b":   {"Headset", true},
+		"old": {"TV", false},
+	}
+	for id, w := range want {
+		if got := loaded.Devices[id]; got.WindowsName != w.windowsName || got.Active != w.active {
+			t.Errorf("reloaded %q = %+v, want windows_name %q, active %v", id, got, w.windowsName, w.active)
+		}
+	}
+	if loaded.Devices["a"].Alias != "Desk" {
+		t.Errorf("alias of a = %q, want the custom one kept", loaded.Devices["a"].Alias)
+	}
+}
+
+func TestStale(t *testing.T) {
+	active := []Device{{ID: "a", Name: "Speakers"}, {ID: "b", Name: "Headset"}}
+	upToDate := map[string]Entry{
+		"a":   {ID: "a", WindowsName: "Speakers", Active: true},
+		"b":   {ID: "b", WindowsName: "Headset"},
+		"old": {ID: "old", WindowsName: "TV"},
+	}
+	with := func(id string, change func(*Entry)) map[string]Entry {
+		m := make(map[string]Entry, len(upToDate))
+		for k, v := range upToDate {
+			m[k] = v
+		}
+		e := m[id]
+		change(&e)
+		m[id] = e
+		return m
+	}
+	tests := []struct {
+		name      string
+		defaultID string
+		entries   map[string]Entry
+		want      bool
+	}{
+		{"up to date", "a", upToDate, false},
+		{"only last_seen differs", "a", with("b", func(e *Entry) { e.LastSeen = dateOf(time.Now()) }), false},
+		{"default changed", "b", upToDate, true},
+		{"no default known", "", upToDate, true},
+		{"renamed in Windows", "a", with("b", func(e *Entry) { e.WindowsName = "USB Headset" }), true},
+		{"disconnected device still marked active", "a", with("old", func(e *Entry) { e.Active = true }), true},
+		{"new device", "a", map[string]Entry{"a": upToDate["a"]}, true},
+	}
+	for _, tt := range tests {
+		if got := Stale(active, tt.defaultID, tt.entries); got != tt.want {
+			t.Errorf("%s: Stale() = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }

@@ -35,10 +35,14 @@ func (a *app) openConfigFile() {
 	if err != nil {
 		log.Printf("list devices for config file: %v", err)
 	}
+	current, err := a.worker.Current()
+	if err != nil {
+		log.Printf("get current device for config file: %v", err)
+	}
 
 	// Open the file even if refreshing it failed - e.g. it has an error
 	// the user now needs to fix.
-	if _, err := a.syncConfig(devices); err != nil {
+	if _, err := a.syncConfig(devices, current.ID); err != nil {
 		log.Printf("sync config: %v", err)
 	}
 	a.syncDeviceMenu()
@@ -64,12 +68,13 @@ func openInDefaultApp(path string) error {
 // syncConfig writes the config file via outputconfig.Sync (adding any
 // device in devices it doesn't already have an entry for, refreshing
 // LastSeen for all of them, and never dropping an entry for a device that
-// isn't in devices, and writing back the file's own hotkey/autostart/poll
+// isn't in devices, marking the one with ID defaultID as active, and
+// writing back the file's own hotkey/autostart/poll
 // interval - never a command-line override), and
 // updates a.cfg/a.configModTime to match. It first picks up any edit made
 // since the file was last read, so it never writes over one - and refuses
 // to write at all while the file on disk fails to parse.
-func (a *app) syncConfig(devices []audio.Device) (map[string]outputconfig.Entry, error) {
+func (a *app) syncConfig(devices []audio.Device, defaultID string) (map[string]outputconfig.Entry, error) {
 	a.reloadConfigIfChanged()
 
 	a.cfgMu.Lock()
@@ -79,7 +84,7 @@ func (a *app) syncConfig(devices []audio.Device) (map[string]outputconfig.Entry,
 		return nil, errConfigInvalid
 	}
 
-	merged, err := outputconfig.Sync(fileSettings, toConfigDevices(devices), cfg)
+	merged, err := outputconfig.Sync(fileSettings, toConfigDevices(devices), defaultID, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -98,17 +103,6 @@ func toConfigDevices(devices []audio.Device) []outputconfig.Device {
 		out[i] = outputconfig.Device{ID: d.ID, Name: d.Name}
 	}
 	return out
-}
-
-// hasNewDevice reports whether devices contains one with no entry in cfg
-// yet, e.g. one just plugged in.
-func hasNewDevice(devices []audio.Device, cfg map[string]outputconfig.Entry) bool {
-	for _, d := range devices {
-		if _, ok := cfg[d.ID]; !ok {
-			return true
-		}
-	}
-	return false
 }
 
 // reloadConfigIfChanged picks up an edit made outside the app (i.e. in

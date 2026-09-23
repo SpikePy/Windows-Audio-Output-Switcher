@@ -34,11 +34,17 @@ associated with `.yaml` files, for you to hand-edit:
   automatically, and a disconnected one keeps its row (never deleted
   automatically, only by editing it out yourself) — with, per device:
   - `id` — the Windows device ID the row belongs to; don't edit it.
+  - `windows_name` — the device's current name in Windows, updated
+    automatically; handy for telling rows apart once they have aliases.
   - `alias` — the name shown for it in the right-click menu and the OSD;
     filled in with the device's Windows name if left blank.
-  - `last_seen` — the date it was last detected as active, updated
+  - `last_seen` — the date it was last detected as connected, updated
     automatically; useful for spotting stale entries worth deleting by
     hand.
+  - `active` — `true` for the device that's currently the default output,
+    `false` for all others; updated automatically whenever the output
+    changes (by the hotkey, the tray, or Windows itself). Editing it
+    switches nothing.
   - `skip` — set to `true` to leave it out of hotkey/left-click cycling.
     It's still shown in the right-click menu, greyed out, and stays fully
     clickable there, so you can switch to it directly at any time.
